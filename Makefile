@@ -4,8 +4,8 @@
 .DEFAULT_GOAL := help
 
 # Variables
-BINARY_NAME=controlplane
-CMD_DIR=./cmd/controlplane
+BINARY_NAME=dispatch
+CMD_DIR=./cmd/dispatch
 BUILD_DIR=./bin
 GO=go
 GOFLAGS=-v

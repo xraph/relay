@@ -7,7 +7,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/uptrace/bun v1.2.16
-	github.com/xraph/forge v0.9.10
+	github.com/xraph/forge v0.9.12
 	github.com/xraph/vessel v0.0.5
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.opentelemetry.io/otel v1.40.0
