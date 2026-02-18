@@ -1,15 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { cn } from "@/lib/cn";
 
 export function CTA() {
   return (
     <section className="relative w-full py-20 sm:py-28 overflow-hidden">
       {/* Background gradients */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-amber-500/[0.03] to-transparent" />
-      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-gradient-to-t from-amber-500/8 to-transparent rounded-full blur-3xl" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-teal-500/[0.03] to-transparent" />
+      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-gradient-to-t from-teal-500/8 to-transparent rounded-full blur-3xl" />
 
       <div className="relative container max-w-(--fd-layout-width) mx-auto px-4 sm:px-6">
         <motion.div
@@ -54,8 +54,8 @@ export function CTA() {
               href="/docs"
               className={cn(
                 "inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-medium transition-colors",
-                "bg-amber-500 text-white hover:bg-amber-600",
-                "shadow-sm shadow-amber-500/20",
+                "bg-teal-500 text-white hover:bg-teal-600",
+                "shadow-sm shadow-teal-500/20",
               )}
             >
               Get Started

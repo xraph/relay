@@ -2,8 +2,8 @@
 
 import { motion } from "framer-motion";
 import { cn } from "@/lib/cn";
-import { SectionHeader } from "./section-header";
 import { CodeBlock } from "./code-block";
+import { SectionHeader } from "./section-header";
 
 interface FeatureCard {
   title: string;
@@ -28,6 +28,7 @@ const features: FeatureCard[] = [
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
@@ -54,6 +55,7 @@ const features: FeatureCard[] = [
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         <path d="M9 12l2 2 4-4" />
@@ -81,6 +83,7 @@ const features: FeatureCard[] = [
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <rect x="2" y="4" width="20" height="5" rx="1" />
         <path d="M4 9v9a2 2 0 002 2h12a2 2 0 002-2V9" />
@@ -107,6 +110,7 @@ r.DLQ().Replay(ctx, items[0].ID)`,
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
         <path d="M7 11V7a5 5 0 0110 0v4" />
@@ -132,6 +136,7 @@ r.DLQ().Replay(ctx, items[0].ID)`,
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
         <circle cx="12" cy="12" r="3" />
@@ -156,6 +161,7 @@ r.DLQ().Replay(ctx, items[0].ID)`,
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <ellipse cx="12" cy="5" rx="9" ry="3" />
         <path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3" />
@@ -212,13 +218,13 @@ export function FeatureBento() {
               key={feature.title}
               variants={itemVariants}
               className={cn(
-                "group relative rounded-xl border border-fd-border bg-fd-card/50 backdrop-blur-sm p-6 hover:border-amber-500/20 hover:bg-fd-card/80 transition-all duration-300",
+                "group relative rounded-xl border border-fd-border bg-fd-card/50 backdrop-blur-sm p-6 hover:border-teal-500/20 hover:bg-fd-card/80 transition-all duration-300",
                 feature.colSpan === 2 && "md:col-span-2",
               )}
             >
               {/* Header */}
               <div className="flex items-start gap-3 mb-4">
-                <div className="flex items-center justify-center size-9 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                <div className="flex items-center justify-center size-9 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 shrink-0">
                   {feature.icon}
                 </div>
                 <div>

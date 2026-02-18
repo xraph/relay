@@ -1,9 +1,9 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { SectionHeader } from "./section-header";
-import { useEffect, useState } from "react";
 
 // ─── Event Type Cycler ───────────────────────────────────────
 const eventTypes = ["order.created", "invoice.paid", "user.signup"];
@@ -27,7 +27,7 @@ function CyclingEventType() {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: -12, opacity: 0 }}
           transition={{ duration: 0.3 }}
-          className="absolute inset-0 text-amber-500 dark:text-amber-400 font-mono text-xs font-medium"
+          className="absolute inset-0 text-teal-500 dark:text-teal-400 font-mono text-xs font-medium"
         >
           {eventTypes[index]}
         </motion.span>
@@ -91,11 +91,12 @@ function Connection({
   delay = 0,
   horizontal = true,
 }: {
-  color?: "amber" | "green" | "red";
+  color?: "teal" | "amber" | "green" | "red";
   delay?: number;
   horizontal?: boolean;
 }) {
   const colorMap = {
+    teal: { line: "bg-teal-500/30", particle: "bg-teal-400" },
     amber: { line: "bg-amber-500/30", particle: "bg-amber-400" },
     green: { line: "bg-green-500/30", particle: "bg-green-400" },
     red: { line: "bg-red-500/30", particle: "bg-red-400" },
@@ -141,11 +142,13 @@ function Connection({
         className="absolute right-0 border-l-[4px] border-y-[2.5px] border-y-transparent border-l-current opacity-30"
         style={{
           color:
-            color === "amber"
-              ? "#f59e0b"
-              : color === "green"
-                ? "#22c55e"
-                : "#ef4444",
+            color === "teal"
+              ? "#14b8a6"
+              : color === "amber"
+                ? "#f59e0b"
+                : color === "green"
+                  ? "#22c55e"
+                  : "#ef4444",
         }}
       />
     </div>
@@ -163,7 +166,7 @@ function EndpointRow({
   name: string;
   status: "delivered" | "retry" | "dlq";
   statusLabel: string;
-  lineColor: "green" | "amber" | "red";
+  lineColor: "green" | "teal" | "amber" | "red";
   delay: number;
 }) {
   const statusColors = {
@@ -219,7 +222,7 @@ function PipelineDiagram() {
       className="relative"
     >
       {/* Background glow */}
-      <div className="absolute inset-0 -m-6 bg-gradient-to-br from-amber-500/5 via-transparent to-orange-500/5 rounded-3xl blur-xl" />
+      <div className="absolute inset-0 -m-6 bg-gradient-to-br from-teal-500/5 via-transparent to-cyan-500/5 rounded-3xl blur-xl" />
 
       <div className="relative p-3 sm:p-6 rounded-2xl border border-fd-border/50 bg-fd-card/30 backdrop-blur-sm">
         {/* Pipeline stages - horizontal on desktop */}
@@ -229,12 +232,12 @@ function PipelineDiagram() {
             <Stage
               label="Send()"
               sublabel={<CyclingEventType />}
-              color="text-amber-600 dark:text-amber-400"
-              borderColor="border-amber-500/30"
-              bgColor="bg-amber-500/5"
+              color="text-teal-600 dark:text-teal-400"
+              borderColor="border-teal-500/30"
+              bgColor="bg-teal-500/5"
               delay={0.1}
             />
-            <Connection color="amber" delay={0} />
+            <Connection color="teal" delay={0} />
             <Stage
               label="Catalog"
               sublabel="validate"
@@ -243,20 +246,20 @@ function PipelineDiagram() {
               bgColor="bg-purple-500/5"
               delay={0.2}
             />
-            <Connection color="amber" delay={0.5} />
+            <Connection color="teal" delay={0.5} />
             <Stage
               label="Fan-Out"
               sublabel="distribute"
-              color="text-amber-600 dark:text-amber-400"
-              borderColor="border-amber-500/30"
-              bgColor="bg-amber-500/8"
+              color="text-teal-600 dark:text-teal-400"
+              borderColor="border-teal-500/30"
+              bgColor="bg-teal-500/8"
               pulse
               delay={0.3}
             />
           </div>
 
           {/* Vertical connection from fan-out to endpoints */}
-          <Connection color="amber" horizontal={false} delay={1} />
+          <Connection color="teal" horizontal={false} delay={1} />
 
           {/* Stage 2: Endpoints with results */}
           <div className="flex flex-col items-start gap-2.5">
@@ -326,8 +329,13 @@ function FeatureBullet({
       transition={{ duration: 0.4, delay }}
       className="flex items-start gap-3"
     >
-      <div className="mt-1 flex items-center justify-center size-5 rounded-md bg-amber-500/10 shrink-0">
-        <svg className="size-3 text-amber-500" viewBox="0 0 12 12" fill="none">
+      <div className="mt-1 flex items-center justify-center size-5 rounded-md bg-teal-500/10 shrink-0">
+        <svg
+          className="size-3 text-teal-500"
+          viewBox="0 0 12 12"
+          fill="none"
+          aria-hidden="true"
+        >
           <path
             d="M2 6l3 3 5-5"
             stroke="currentColor"
@@ -352,7 +360,7 @@ export function DeliveryFlowSection() {
   return (
     <section className="relative w-full py-20 sm:py-28 overflow-hidden">
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-amber-500/[0.02] to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-teal-500/[0.02] to-transparent" />
 
       <div className="container max-w-(--fd-layout-width) mx-auto px-4 sm:px-6">
         <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
@@ -392,10 +400,15 @@ export function DeliveryFlowSection() {
             >
               <a
                 href="/docs/relay/architecture"
-                className="inline-flex items-center gap-1 text-sm font-medium text-amber-600 dark:text-amber-400 hover:text-amber-500 transition-colors"
+                className="inline-flex items-center gap-1 text-sm font-medium text-teal-600 dark:text-teal-400 hover:text-teal-500 transition-colors"
               >
                 Learn about the architecture
-                <svg className="size-3.5" viewBox="0 0 16 16" fill="none">
+                <svg
+                  className="size-3.5"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  aria-hidden="true"
+                >
                   <path
                     d="M6 4l4 4-4 4"
                     stroke="currentColor"

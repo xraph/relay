@@ -1,15 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { motion } from "framer-motion";
+import Link from "next/link";
+import { cn } from "@/lib/cn";
 import { AnimatedTagline } from "./animated-tagline";
 import {
-  FlowNode,
-  FlowLine,
   FloatingBadge,
+  FlowLine,
+  FlowNode,
   StatusBadge,
 } from "./flow-primitives";
-import { cn } from "@/lib/cn";
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -41,11 +41,16 @@ function MiniWebhookFlow() {
         <div className="flex items-center justify-center gap-0">
           <FlowNode
             label="Event"
-            color="amber"
+            color="teal"
             size="sm"
             delay={0.4}
             icon={
-              <svg className="size-3" viewBox="0 0 12 12" fill="none">
+              <svg
+                className="size-3"
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+              >
                 <path
                   d="M6 1L10 6L6 11"
                   stroke="currentColor"
@@ -56,10 +61,10 @@ function MiniWebhookFlow() {
               </svg>
             }
           />
-          <FlowLine length={32} color="amber" delay={1} />
+          <FlowLine length={32} color="teal" delay={1} />
           <FlowNode label="Validate" color="purple" size="sm" delay={0.55} />
-          <FlowLine length={32} color="amber" delay={2} />
-          <FlowNode label="Fan-Out" color="amber" size="sm" pulse delay={0.7} />
+          <FlowLine length={32} color="teal" delay={2} />
+          <FlowNode label="Fan-Out" color="teal" size="sm" pulse delay={0.7} />
         </div>
 
         {/* Row 2: Fan-out to 3 endpoints */}

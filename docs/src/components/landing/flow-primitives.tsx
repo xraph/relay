@@ -1,13 +1,13 @@
 "use client";
 
-import { cn } from "@/lib/cn";
 import { motion } from "framer-motion";
+import { cn } from "@/lib/cn";
 
 // ─── Flow Node ───────────────────────────────────────────────
 interface FlowNodeProps {
   label: string;
   sublabel?: string;
-  color?: "amber" | "green" | "red" | "blue" | "gray" | "purple";
+  color?: "teal" | "amber" | "green" | "red" | "blue" | "gray" | "purple";
   size?: "sm" | "md" | "lg";
   icon?: React.ReactNode;
   pulse?: boolean;
@@ -16,6 +16,7 @@ interface FlowNodeProps {
 }
 
 const colorMap = {
+  teal: "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
   amber:
     "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
   green:
@@ -28,6 +29,7 @@ const colorMap = {
 };
 
 const pulseColorMap = {
+  teal: "shadow-teal-500/20",
   amber: "shadow-amber-500/20",
   green: "shadow-green-500/20",
   red: "shadow-red-500/20",
@@ -83,13 +85,14 @@ export function FlowNode({
 interface FlowLineProps {
   direction?: "horizontal" | "vertical";
   length?: number;
-  color?: "amber" | "green" | "red" | "gray";
+  color?: "teal" | "amber" | "green" | "red" | "gray";
   animated?: boolean;
   className?: string;
   delay?: number;
 }
 
 const lineColorMap = {
+  teal: "bg-teal-500/40",
   amber: "bg-amber-500/40",
   green: "bg-green-500/40",
   red: "bg-red-500/40",
@@ -97,6 +100,7 @@ const lineColorMap = {
 };
 
 const particleColorMap = {
+  teal: "bg-teal-400",
   amber: "bg-amber-400",
   green: "bg-green-400",
   red: "bg-red-400",
@@ -163,6 +167,8 @@ export function FlowLine({
             isH
               ? "border-l-[5px] border-y-[3px] border-y-transparent"
               : "border-t-[5px] border-x-[3px] border-x-transparent",
+            color === "teal" &&
+              (isH ? "border-l-teal-500/50" : "border-t-teal-500/50"),
             color === "amber" &&
               (isH ? "border-l-amber-500/50" : "border-t-amber-500/50"),
             color === "green" &&
@@ -183,7 +189,7 @@ export function FlowLine({
 interface FlowParticleStreamProps {
   direction?: "horizontal" | "vertical";
   length?: number;
-  color?: "amber" | "green" | "red";
+  color?: "teal" | "amber" | "green" | "red";
   count?: number;
   className?: string;
 }
@@ -215,6 +221,7 @@ export function FlowParticleStream({
       />
       {Array.from({ length: count }).map((_, i) => (
         <motion.div
+          // biome-ignore lint/suspicious/noArrayIndexKey: static particle count
           key={i}
           className={cn(
             "absolute rounded-full size-1",
@@ -286,7 +293,12 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
       )}
     >
       {config.icon === "check" && (
-        <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
+        <svg
+          className="size-2.5"
+          viewBox="0 0 12 12"
+          fill="none"
+          aria-hidden="true"
+        >
           <path
             d="M2 6l3 3 5-5"
             stroke="currentColor"
@@ -297,7 +309,12 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
         </svg>
       )}
       {config.icon === "retry" && (
-        <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
+        <svg
+          className="size-2.5"
+          viewBox="0 0 12 12"
+          fill="none"
+          aria-hidden="true"
+        >
           <path
             d="M2 6a4 4 0 016.5-3M10 6a4 4 0 01-6.5 3"
             stroke="currentColor"
@@ -307,7 +324,12 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
         </svg>
       )}
       {config.icon === "archive" && (
-        <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
+        <svg
+          className="size-2.5"
+          viewBox="0 0 12 12"
+          fill="none"
+          aria-hidden="true"
+        >
           <rect
             x="1"
             y="2"

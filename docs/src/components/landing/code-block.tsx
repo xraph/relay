@@ -1,7 +1,7 @@
 "use client";
 
-import { cn } from "@/lib/cn";
 import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/cn";
 
 // Simple Go syntax highlighter
 function highlightGo(code: string): string {
@@ -156,6 +156,7 @@ export function CodeBlock({
             </span>
           </div>
           <button
+            type="button"
             onClick={handleCopy}
             className="text-xs text-fd-muted-foreground hover:text-fd-foreground transition-colors px-2 py-1 rounded-md hover:bg-fd-muted/50"
           >
@@ -171,6 +172,7 @@ export function CodeBlock({
       >
         <code>
           {highlighted.map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static code lines never reorder
             <div key={i} className="flex">
               {showLineNumbers && (
                 <span className="select-none text-fd-muted-foreground/30 w-8 shrink-0 text-right pr-4 text-xs leading-relaxed">
@@ -179,6 +181,7 @@ export function CodeBlock({
               )}
               <span
                 className="flex-1"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: syntax highlighted code from static input
                 dangerouslySetInnerHTML={{ __html: line || "&nbsp;" }}
               />
             </div>

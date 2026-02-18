@@ -34,6 +34,7 @@ export function AnimatedTagline({ className }: { className?: string }) {
       )}
     >
       {words.map((word, wordIdx) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static word list never reorders
         <span key={wordIdx} className="inline-block">
           {word.split("").map((char) => {
             const currentIndex = charIndex++;

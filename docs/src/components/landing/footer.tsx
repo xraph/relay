@@ -70,8 +70,8 @@ export function Footer() {
                 target="_blank"
                 rel="noreferrer"
                 className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-                aria-label="GitHub"
               >
+                <span className="sr-only">GitHub</span>
                 <svg
                   className="size-5"
                   fill="currentColor"
@@ -86,8 +86,8 @@ export function Footer() {
                 target="_blank"
                 rel="noreferrer"
                 className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-                aria-label="X (Twitter)"
               >
+                <span className="sr-only">X (Twitter)</span>
                 <svg
                   className="size-5"
                   fill="currentColor"
@@ -140,7 +140,7 @@ export function Footer() {
           </p>
           <div className="flex items-center gap-1 text-xs text-fd-muted-foreground">
             <span>Built with</span>
-            <span className="inline-block text-amber-500 mx-0.5">
+            <span className="inline-block text-rose-400 mx-0.5">
               <svg
                 className="size-3.5 inline-block"
                 viewBox="0 0 24 24"

@@ -1,8 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { SectionHeader } from "./section-header";
 import { CodeBlock } from "./code-block";
+import { SectionHeader } from "./section-header";
 
 const sendCode = `package main
 
@@ -83,7 +83,7 @@ export function CodeShowcase() {
             transition={{ duration: 0.5, delay: 0.1 }}
           >
             <div className="mb-3 flex items-center gap-2">
-              <div className="size-2 rounded-full bg-amber-500" />
+              <div className="size-2 rounded-full bg-teal-500" />
               <span className="text-xs font-medium text-fd-muted-foreground uppercase tracking-wider">
                 Sender
               </span>
