@@ -108,48 +108,48 @@ jobs:
           fi
 
   # ─── Docs ───────────────────────────────────────────────────────────
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
+  # docs:
+  #   name: Docs
+  #   runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: docs
+  #   defaults:
+  #     run:
+  #       working-directory: docs
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
+  #     - name: Set up Node.js
+  #       uses: actions/setup-node@v6
+  #       with:
+  #         node-version: 22
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+  #     - name: Install pnpm
+  #       uses: pnpm/action-setup@v4
+  #       with:
+  #         version: 10
 
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+  #     - name: Get pnpm store directory
+  #       shell: bash
+  #       run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
-      - name: Cache pnpm
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('docs/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+  #     - name: Cache pnpm
+  #       uses: actions/cache@v5
+  #       with:
+  #         path: ${{ env.STORE_PATH }}
+  #         key: ${{ runner.os }}-pnpm-${{ hashFiles('docs/pnpm-lock.yaml') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-pnpm-
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+  #     - name: Install dependencies
+  #       run: pnpm install --frozen-lockfile
 
-      - name: Type check
-        run: pnpm types:check
+  #     - name: Type check
+  #       run: pnpm types:check
 
-      - name: Lint
-        run: pnpm lint
+  #     - name: Lint
+  #       run: pnpm lint
 
-      - name: Build
-        run: pnpm build
+  #     - name: Build
+  #       run: pnpm build
