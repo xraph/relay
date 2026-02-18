@@ -17,7 +17,7 @@ function highlightGo(code: string): string {
   // Comments (single-line)
   result = result.replace(
     /(\/\/.*$)/gm,
-    '<span className="text-fd-muted-foreground/60 italic">$1</span>',
+    '<span className=" italic">$1</span>',
   );
 
   // Strings (double-quoted)
