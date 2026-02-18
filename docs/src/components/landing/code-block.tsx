@@ -17,19 +17,19 @@ function highlightGo(code: string): string {
   // Comments (single-line)
   result = result.replace(
     /(\/\/.*$)/gm,
-    '<span class="text-fd-muted-foreground/60 italic">$1</span>',
+    '<span className="text-fd-muted-foreground/60 italic">$1</span>',
   );
 
   // Strings (double-quoted)
   result = result.replace(
     /("(?:[^"\\]|\\.)*")/g,
-    '<span class="text-teal-400">$1</span>',
+    '<span className="text-teal-400">$1</span>',
   );
 
   // Backtick strings
   result = result.replace(
     /(`[^`]*`)/g,
-    '<span class="text-teal-400">$1</span>',
+    '<span className="text-teal-400">$1</span>',
   );
 
   // Keywords
