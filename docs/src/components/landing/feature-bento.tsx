@@ -20,7 +20,15 @@ const features: FeatureCard[] = [
     description:
       "Type-safe event registration with schema validation. Define your event types once, reference them everywhere.",
     icon: (
-      <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
         <path d="M8 7h8M8 11h6" />
@@ -38,7 +46,15 @@ const features: FeatureCard[] = [
     description:
       "Configurable retry schedules with exponential backoff. No event is lost, ever.",
     icon: (
-      <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         <path d="M9 12l2 2 4-4" />
       </svg>
@@ -57,7 +73,15 @@ const features: FeatureCard[] = [
     description:
       "Failed deliveries are captured automatically. Inspect, debug, and replay them on demand.",
     icon: (
-      <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="2" y="4" width="20" height="5" rx="1" />
         <path d="M4 9v9a2 2 0 002 2h12a2 2 0 002-2V9" />
         <path d="M10 13h4" />
@@ -75,7 +99,15 @@ r.DLQ().Replay(ctx, items[0].ID)`,
     description:
       "Every payload is signed with HMAC-SHA256. Receivers verify authenticity with a single call.",
     icon: (
-      <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
         <path d="M7 11V7a5 5 0 0110 0v4" />
       </svg>
@@ -92,7 +124,15 @@ r.DLQ().Replay(ctx, items[0].ID)`,
     description:
       "Per-endpoint token bucket rate limiting protects downstream services from being overwhelmed.",
     icon: (
-      <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
         <circle cx="12" cy="12" r="3" />
       </svg>
@@ -108,7 +148,15 @@ r.DLQ().Replay(ctx, items[0].ID)`,
     description:
       "Ship with in-memory for dev, swap to PostgreSQL for production. Bring your own store with a simple interface.",
     icon: (
-      <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <ellipse cx="12" cy="5" rx="9" ry="3" />
         <path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3" />
         <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />

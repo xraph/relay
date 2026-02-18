@@ -67,19 +67,14 @@ export function FlowNode({
     >
       {pulse && (
         <motion.div
-          className={cn(
-            "absolute inset-0 rounded-lg border",
-            colorMap[color],
-          )}
+          className={cn("absolute inset-0 rounded-lg border", colorMap[color])}
           animate={{ opacity: [0.5, 0], scale: [1, 1.15] }}
           transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
         />
       )}
       {icon}
       <span>{label}</span>
-      {sublabel && (
-        <span className="opacity-60 text-[0.85em]">{sublabel}</span>
-      )}
+      {sublabel && <span className="opacity-60 text-[0.85em]">{sublabel}</span>}
     </motion.div>
   );
 }
@@ -161,22 +156,21 @@ export function FlowLine({
       )}
 
       {/* Arrowhead */}
-      <div
-        className={cn(
-          "absolute",
-          isH ? "right-0" : "bottom-0",
-        )}
-      >
+      <div className={cn("absolute", isH ? "right-0" : "bottom-0")}>
         <div
           className={cn(
             "border-solid",
             isH
               ? "border-l-[5px] border-y-[3px] border-y-transparent"
               : "border-t-[5px] border-x-[3px] border-x-transparent",
-            color === "amber" && (isH ? "border-l-amber-500/50" : "border-t-amber-500/50"),
-            color === "green" && (isH ? "border-l-green-500/50" : "border-t-green-500/50"),
-            color === "red" && (isH ? "border-l-red-500/50" : "border-t-red-500/50"),
-            color === "gray" && (isH ? "border-l-fd-border" : "border-t-fd-border"),
+            color === "amber" &&
+              (isH ? "border-l-amber-500/50" : "border-t-amber-500/50"),
+            color === "green" &&
+              (isH ? "border-l-green-500/50" : "border-t-green-500/50"),
+            color === "red" &&
+              (isH ? "border-l-red-500/50" : "border-t-red-500/50"),
+            color === "gray" &&
+              (isH ? "border-l-fd-border" : "border-t-fd-border"),
           )}
         />
       </div>
@@ -252,12 +246,14 @@ interface StatusBadgeProps {
 
 const statusConfig = {
   delivered: {
-    color: "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20",
+    color:
+      "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20",
     defaultLabel: "200 Delivered",
     icon: "check",
   },
   retry: {
-    color: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
+    color:
+      "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
     defaultLabel: "503 Retry",
     icon: "retry",
   },
@@ -291,19 +287,47 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
     >
       {config.icon === "check" && (
         <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
-          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M2 6l3 3 5-5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       )}
       {config.icon === "retry" && (
         <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
-          <path d="M2 6a4 4 0 016.5-3M10 6a4 4 0 01-6.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path
+            d="M2 6a4 4 0 016.5-3M10 6a4 4 0 01-6.5 3"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
       )}
       {config.icon === "archive" && (
         <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
-          <rect x="1" y="2" width="10" height="3" rx="0.5" stroke="currentColor" strokeWidth="1" />
-          <path d="M2 5v4.5a.5.5 0 00.5.5h7a.5.5 0 00.5-.5V5" stroke="currentColor" strokeWidth="1" />
-          <path d="M5 7h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <rect
+            x="1"
+            y="2"
+            width="10"
+            height="3"
+            rx="0.5"
+            stroke="currentColor"
+            strokeWidth="1"
+          />
+          <path
+            d="M2 5v4.5a.5.5 0 00.5.5h7a.5.5 0 00.5-.5V5"
+            stroke="currentColor"
+            strokeWidth="1"
+          />
+          <path
+            d="M5 7h2"
+            stroke="currentColor"
+            strokeWidth="1"
+            strokeLinecap="round"
+          />
         </svg>
       )}
       {label || config.defaultLabel}
@@ -318,7 +342,11 @@ interface FloatingBadgeProps {
   delay?: number;
 }
 
-export function FloatingBadge({ label, className, delay = 0 }: FloatingBadgeProps) {
+export function FloatingBadge({
+  label,
+  className,
+  delay = 0,
+}: FloatingBadgeProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}

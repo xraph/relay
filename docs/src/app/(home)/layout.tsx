@@ -5,7 +5,7 @@ import { Footer } from "@/components/landing/footer";
 export default function Layout({ children }: LayoutProps<"/">) {
   return (
     <HomeLayout {...baseOptions()}>
-      {children} 
+      {children}
       <Footer />
     </HomeLayout>
   );

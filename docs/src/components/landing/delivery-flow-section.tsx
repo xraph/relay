@@ -47,7 +47,15 @@ interface StageProps {
   delay: number;
 }
 
-function Stage({ label, sublabel, color, borderColor, bgColor, pulse, delay }: StageProps) {
+function Stage({
+  label,
+  sublabel,
+  color,
+  borderColor,
+  bgColor,
+  pulse,
+  delay,
+}: StageProps) {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.85 }}
@@ -71,9 +79,7 @@ function Stage({ label, sublabel, color, borderColor, bgColor, pulse, delay }: S
         {label}
       </span>
       {sublabel && (
-        <span className="text-[10px] text-fd-muted-foreground">
-          {sublabel}
-        </span>
+        <span className="text-[10px] text-fd-muted-foreground">{sublabel}</span>
       )}
     </motion.div>
   );
@@ -100,11 +106,18 @@ function Connection({
   if (!horizontal) {
     return (
       <div className="relative flex flex-col items-center h-6 w-px">
-        <div className={cn("absolute inset-0 w-[1.5px] rounded-full", c.line)} />
+        <div
+          className={cn("absolute inset-0 w-[1.5px] rounded-full", c.line)}
+        />
         <motion.div
           className={cn("absolute size-1.5 rounded-full", c.particle)}
           animate={{ y: [-2, 22], opacity: [0, 1, 1, 0] }}
-          transition={{ duration: 1.2, repeat: Infinity, ease: "linear", delay }}
+          transition={{
+            duration: 1.2,
+            repeat: Infinity,
+            ease: "linear",
+            delay,
+          }}
         />
       </div>
     );
@@ -112,14 +125,29 @@ function Connection({
 
   return (
     <div className="relative flex items-center h-px w-8 md:w-12 shrink-0">
-      <div className={cn("absolute inset-0 h-[1.5px] rounded-full my-auto", c.line)} />
+      <div
+        className={cn(
+          "absolute inset-0 h-[1.5px] rounded-full my-auto",
+          c.line,
+        )}
+      />
       <motion.div
         className={cn("absolute size-1.5 rounded-full", c.particle)}
         animate={{ x: [-2, 40], opacity: [0, 1, 1, 0] }}
         transition={{ duration: 1.4, repeat: Infinity, ease: "linear", delay }}
       />
       {/* Arrow */}
-      <div className="absolute right-0 border-l-[4px] border-y-[2.5px] border-y-transparent border-l-current opacity-30" style={{ color: color === "amber" ? "#f59e0b" : color === "green" ? "#22c55e" : "#ef4444" }} />
+      <div
+        className="absolute right-0 border-l-[4px] border-y-[2.5px] border-y-transparent border-l-current opacity-30"
+        style={{
+          color:
+            color === "amber"
+              ? "#f59e0b"
+              : color === "green"
+                ? "#22c55e"
+                : "#ef4444",
+        }}
+      />
     </div>
   );
 }
@@ -139,8 +167,10 @@ function EndpointRow({
   delay: number;
 }) {
   const statusColors = {
-    delivered: "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20",
-    retry: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
+    delivered:
+      "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20",
+    retry:
+      "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
     dlq: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/20",
   };
 
@@ -298,7 +328,13 @@ function FeatureBullet({
     >
       <div className="mt-1 flex items-center justify-center size-5 rounded-md bg-amber-500/10 shrink-0">
         <svg className="size-3 text-amber-500" viewBox="0 0 12 12" fill="none">
-          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M2 6l3 3 5-5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </div>
       <div>
@@ -360,7 +396,13 @@ export function DeliveryFlowSection() {
               >
                 Learn about the architecture
                 <svg className="size-3.5" viewBox="0 0 16 16" fill="none">
-                  <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M6 4l4 4-4 4"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </a>
             </motion.div>
