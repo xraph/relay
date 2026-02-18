@@ -82,13 +82,9 @@ func (e *Extension) Register(fapp forge.App) error {
 		return err
 	}
 
-	if err := vessel.Provide(fapp.Container(), func() (*relay.Relay, error) {
+	return vessel.Provide(fapp.Container(), func() (*relay.Relay, error) {
 		return e.r, nil
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	})
 }
 
 // Init initializes the extension. In a Forge environment, this is called
@@ -113,7 +109,7 @@ func (e *Extension) Init(fapp forge.App) error {
 	}
 
 	// Set up Forge API.
-	e.api = api.NewForgeAPI(e.r.Store(), e.r.Catalog(), e.r.Endpoints(), e.r.DLQ(), e.r)
+	e.api = api.NewForgeAPI(e.r.Store(), e.r.Catalog(), e.r.Endpoints(), e.r.DLQ(), e.r, fapp.Logger())
 	if !e.config.DisableRoutes {
 		prefix := e.config.Prefix
 		if prefix == "" {
