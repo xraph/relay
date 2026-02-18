@@ -60,7 +60,7 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 	}
 
 	start := time.Now()
-	resp, err := s.client.Do(req)
+	resp, err := s.client.Do(req) //nolint:gosec // G704: URL is a user-configured webhook destination; SSRF is by design.
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {

@@ -56,6 +56,10 @@ linters:
         - name: if-return
         - name: increment-decrement
         - name: var-naming
+          arguments:
+            - [] # allowList
+            - [] # blockList
+            - [{skipPackageNameChecks: true}]
         - name: var-declaration
         - name: range
         - name: receiver-naming
@@ -71,6 +75,7 @@ linters:
     gosec:
       excludes:
         - G104
+        - G117 # Secret field names are legitimate for HMAC signing secrets.
         - G304
         - G402
 
