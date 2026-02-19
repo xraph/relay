@@ -1,50 +1,34 @@
 package observability
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	gu "github.com/xraph/go-utils/metrics"
 )
 
-// Metrics holds Prometheus metrics for Relay.
+// Metrics holds metric instruments for Relay, backed by any go-utils MetricFactory
+// (e.g. the forge-managed metrics system via fapp.Metrics()).
 type Metrics struct {
-	EventsSentTotal   prometheus.Counter
-	DeliveriesTotal   *prometheus.CounterVec
-	DeliveryLatency   prometheus.Histogram
-	DLQSize           prometheus.Gauge
-	PendingDeliveries prometheus.Gauge
+	EventsSentTotal   gu.Counter
+	DeliveriesTotal   gu.Counter
+	DeliveryLatency   gu.Histogram
+	DLQSize           gu.Gauge
+	PendingDeliveries gu.Gauge
 }
 
-// NewMetrics creates and registers Relay Prometheus metrics.
-func NewMetrics(reg prometheus.Registerer) *Metrics {
-	factory := promauto.With(reg)
-
+// NewMetrics creates Relay metric instruments using the supplied factory.
+// Pass fapp.Metrics() from a forge extension, or metrics.NewMetricsCollector()
+// for standalone usage.
+func NewMetrics(factory gu.MetricFactory) *Metrics {
 	return &Metrics{
-		EventsSentTotal: factory.NewCounter(prometheus.CounterOpts{
-			Name: "relay_events_sent_total",
-			Help: "Total number of events submitted to Relay.",
-		}),
-		DeliveriesTotal: factory.NewCounterVec(prometheus.CounterOpts{
-			Name: "relay_deliveries_total",
-			Help: "Total number of delivery attempts by status.",
-		}, []string{"status"}),
-		DeliveryLatency: factory.NewHistogram(prometheus.HistogramOpts{
-			Name:    "relay_delivery_latency_seconds",
-			Help:    "Delivery HTTP request latency in seconds.",
-			Buckets: prometheus.DefBuckets,
-		}),
-		DLQSize: factory.NewGauge(prometheus.GaugeOpts{
-			Name: "relay_dlq_size",
-			Help: "Current number of entries in the dead letter queue.",
-		}),
-		PendingDeliveries: factory.NewGauge(prometheus.GaugeOpts{
-			Name: "relay_pending_deliveries",
-			Help: "Current number of pending deliveries.",
-		}),
+		EventsSentTotal:   factory.Counter("relay_events_sent_total"),
+		DeliveriesTotal:   factory.Counter("relay_deliveries_total"),
+		DeliveryLatency:   factory.Histogram("relay_delivery_latency_seconds"),
+		DLQSize:           factory.Gauge("relay_dlq_size"),
+		PendingDeliveries: factory.Gauge("relay_pending_deliveries"),
 	}
 }
 
-// RecordDelivery records a delivery attempt with the given status.
+// RecordDelivery records a delivery attempt with the given status and latency.
 func (m *Metrics) RecordDelivery(status string, latencySeconds float64) {
-	m.DeliveriesTotal.WithLabelValues(status).Inc()
+	m.DeliveriesTotal.WithLabels(map[string]string{"status": status}).Inc()
 	m.DeliveryLatency.Observe(latencySeconds)
 }

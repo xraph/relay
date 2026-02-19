@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
+	"github.com/xraph/relay/observability"
 	"github.com/xraph/relay/store"
 )
 
@@ -21,6 +22,8 @@ type Relay struct {
 	engine      *delivery.Engine
 	dlqSvc      *dlq.Service
 	logger      *slog.Logger
+	metrics     *observability.Metrics
+	tracer      *observability.Tracer
 }
 
 // Option configures a Relay instance.
@@ -120,6 +123,22 @@ func WithShutdownTimeout(d time.Duration) Option {
 func WithCacheTTL(d time.Duration) Option {
 	return func(r *Relay) error {
 		r.config.CacheTTL = d
+		return nil
+	}
+}
+
+// WithMetrics sets the Prometheus metrics recorder for the Relay instance.
+func WithMetrics(m *observability.Metrics) Option {
+	return func(r *Relay) error {
+		r.metrics = m
+		return nil
+	}
+}
+
+// WithTracer sets the OpenTelemetry tracer for the Relay instance.
+func WithTracer(t *observability.Tracer) Option {
+	return func(r *Relay) error {
+		r.tracer = t
 		return nil
 	}
 }

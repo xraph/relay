@@ -35,6 +35,8 @@ func (r *Relay) wireServices() {
 		BatchSize:      r.config.BatchSize,
 		RequestTimeout: r.config.RequestTimeout,
 		RetrySchedule:  r.config.RetrySchedule,
+		Metrics:        r.metrics,
+		Tracer:         r.tracer,
 	}, r.logger)
 }
 
@@ -125,6 +127,11 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 
 	if err := r.store.EnqueueBatch(ctx, deliveries); err != nil {
 		return fmt.Errorf("relay: enqueue deliveries: %w", err)
+	}
+
+	if r.metrics != nil {
+		r.metrics.EventsSentTotal.Inc()
+		r.metrics.PendingDeliveries.Add(float64(len(deliveries)))
 	}
 
 	r.logger.DebugContext(ctx, "event sent",

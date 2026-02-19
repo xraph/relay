@@ -3,12 +3,15 @@ package observability
 import (
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/xraph/go-utils/metrics"
 )
 
+func newTestFactory() metrics.MetricFactory {
+	return metrics.NewMetricsCollector("relay-test")
+}
+
 func TestNewMetrics_Registers(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
+	m := NewMetrics(newTestFactory())
 
 	if m.EventsSentTotal == nil {
 		t.Fatal("EventsSentTotal should not be nil")
@@ -28,93 +31,44 @@ func TestNewMetrics_Registers(t *testing.T) {
 }
 
 func TestRecordDelivery(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
+	m := NewMetrics(newTestFactory())
 
 	m.RecordDelivery("delivered", 0.5)
 	m.RecordDelivery("delivered", 1.2)
 	m.RecordDelivery("failed", 0.3)
 
-	// Verify the counter vec has values by gathering.
-	families, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("gather: %v", err)
+	if got := m.DeliveryLatency.Count(); got != 3 {
+		t.Fatalf("expected 3 latency observations, got %d", got)
 	}
 
-	found := false
-	for _, f := range families {
-		if f.GetName() == "relay_deliveries_total" {
-			found = true
-			metrics := f.GetMetric()
-			if len(metrics) != 2 { // delivered + failed
-				t.Fatalf("expected 2 label combinations, got %d", len(metrics))
-			}
-		}
-	}
-	if !found {
-		t.Fatal("relay_deliveries_total metric not found")
+	wantSum := 0.5 + 1.2 + 0.3
+	if got := m.DeliveryLatency.Sum(); got != wantSum {
+		t.Fatalf("expected sum %.1f, got %.1f", wantSum, got)
 	}
 }
 
 func TestEventsSentTotal(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
+	m := NewMetrics(newTestFactory())
 
 	m.EventsSentTotal.Inc()
 	m.EventsSentTotal.Inc()
 	m.EventsSentTotal.Inc()
 
-	families, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("gather: %v", err)
+	if got := m.EventsSentTotal.Value(); got != 3 {
+		t.Fatalf("expected count 3, got %f", got)
 	}
-
-	for _, f := range families {
-		if f.GetName() == "relay_events_sent_total" {
-			metrics := f.GetMetric()
-			if len(metrics) != 1 {
-				t.Fatalf("expected 1 metric, got %d", len(metrics))
-			}
-			val := metrics[0].GetCounter().GetValue()
-			if val != 3 {
-				t.Fatalf("expected count 3, got %f", val)
-			}
-			return
-		}
-	}
-	t.Fatal("relay_events_sent_total metric not found")
 }
 
 func TestGauges(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
+	m := NewMetrics(newTestFactory())
 
 	m.DLQSize.Set(42)
 	m.PendingDeliveries.Set(100)
 
-	families, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("gather: %v", err)
+	if got := m.DLQSize.Value(); got != 42 {
+		t.Fatalf("relay_dlq_size: expected 42, got %f", got)
 	}
-
-	gauges := map[string]float64{
-		"relay_dlq_size":           42,
-		"relay_pending_deliveries": 100,
-	}
-
-	for _, f := range families {
-		expected, ok := gauges[f.GetName()]
-		if !ok {
-			continue
-		}
-		val := f.GetMetric()[0].GetGauge().GetValue()
-		if val != expected {
-			t.Fatalf("%s: expected %f, got %f", f.GetName(), expected, val)
-		}
-		delete(gauges, f.GetName())
-	}
-
-	if len(gauges) > 0 {
-		t.Fatalf("metrics not found: %v", gauges)
+	if got := m.PendingDeliveries.Value(); got != 100 {
+		t.Fatalf("relay_pending_deliveries: expected 100, got %f", got)
 	}
 }

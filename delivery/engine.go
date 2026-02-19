@@ -6,9 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/observability"
 )
 
 // EngineStore is the interface the engine needs for delivery operations.
@@ -32,6 +35,8 @@ type EngineConfig struct {
 	BatchSize      int
 	RequestTimeout time.Duration
 	RetrySchedule  []time.Duration
+	Metrics        *observability.Metrics
+	Tracer         *observability.Tracer
 }
 
 // Engine is the delivery worker pool that dequeues and processes deliveries.
@@ -119,10 +124,19 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 // process handles a single delivery: fetch endpoint + event, send, decide, update.
 func (e *Engine) process(ctx context.Context, d *Delivery) {
+	// Start a tracing span for this delivery attempt.
+	var span trace.Span
+	if e.config.Tracer != nil {
+		ctx, span = e.config.Tracer.StartDeliverySpan(ctx, d.ID.String(), d.EventID.String(), d.EndpointID.String())
+	}
+
 	ep, err := e.store.GetEndpoint(ctx, d.EndpointID)
 	if err != nil {
 		e.logger.ErrorContext(ctx, "get endpoint failed",
 			"delivery_id", d.ID, "endpoint_id", d.EndpointID, "error", err)
+		if span != nil {
+			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
+		}
 		return
 	}
 
@@ -130,6 +144,9 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	if err != nil {
 		e.logger.ErrorContext(ctx, "get event failed",
 			"delivery_id", d.ID, "event_id", d.EventID, "error", err)
+		if span != nil {
+			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
+		}
 		return
 	}
 
@@ -143,6 +160,8 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	d.LastResponse = result.Response
 	d.LastLatencyMs = result.LatencyMs
 
+	latencySeconds := float64(result.LatencyMs) / 1000.0
+
 	// Decide what to do next.
 	decision := e.retrier.Decide(result, d)
 
@@ -151,11 +170,18 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		now := time.Now().UTC()
 		d.State = StateDelivered
 		d.CompletedAt = &now
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordDelivery("delivered", latencySeconds)
+			e.config.Metrics.PendingDeliveries.Dec()
+		}
 		e.logger.DebugContext(ctx, "delivered",
 			"delivery_id", d.ID, "status", result.StatusCode, "latency_ms", result.LatencyMs)
 
 	case Retry:
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(d.AttemptCount)
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordDelivery("retried", latencySeconds)
+		}
 		e.logger.DebugContext(ctx, "retry scheduled",
 			"delivery_id", d.ID, "attempt", d.AttemptCount, "next_at", d.NextAttemptAt)
 
@@ -168,6 +194,11 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 				e.logger.ErrorContext(ctx, "push to DLQ failed",
 					"delivery_id", d.ID, "error", dlqErr)
 			}
+		}
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordDelivery("failed", latencySeconds)
+			e.config.Metrics.PendingDeliveries.Dec()
+			e.config.Metrics.DLQSize.Inc()
 		}
 		e.logger.WarnContext(ctx, "delivery failed permanently",
 			"delivery_id", d.ID, "status", result.StatusCode, "error", result.Error)
@@ -186,8 +217,18 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 					"delivery_id", d.ID, "error", dlqErr)
 			}
 		}
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordDelivery("failed", latencySeconds)
+			e.config.Metrics.PendingDeliveries.Dec()
+			e.config.Metrics.DLQSize.Inc()
+		}
 		e.logger.WarnContext(ctx, "endpoint disabled (410 Gone)",
 			"endpoint_id", d.EndpointID, "delivery_id", d.ID)
+	}
+
+	// End the tracing span with the final result.
+	if span != nil {
+		e.config.Tracer.EndDeliverySpan(span, d.LastStatusCode, int(d.LastLatencyMs), d.LastError)
 	}
 
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
+	"github.com/xraph/relay/observability"
 	"github.com/xraph/relay/store"
 )
 
@@ -91,9 +92,15 @@ func (e *Extension) Register(fapp forge.App) error {
 // during Register. For standalone use, call it manually.
 func (e *Extension) Init(fapp forge.App) error {
 	// Build relay options from extension config + user options.
-	relayOpts := make([]relay.Option, 0, len(e.opts)+4)
+	relayOpts := make([]relay.Option, 0, len(e.opts)+6)
 	relayOpts = append(relayOpts, e.opts...)
 	relayOpts = append(relayOpts, e.config.ToRelayOptions()...)
+
+	// Wire observability through the forge-managed metrics system.
+	relayOpts = append(relayOpts,
+		relay.WithMetrics(observability.NewMetrics(fapp.Metrics())),
+		relay.WithTracer(observability.NewTracer()),
+	)
 
 	var err error
 	e.r, err = relay.New(relayOpts...)
