@@ -228,7 +228,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 
 	// End the tracing span with the final result.
 	if span != nil {
-		e.config.Tracer.EndDeliverySpan(span, d.LastStatusCode, int(d.LastLatencyMs), d.LastError)
+		e.config.Tracer.EndDeliverySpan(span, d.LastStatusCode, d.LastLatencyMs, d.LastError)
 	}
 
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
