@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
-	github.com/uptrace/bun v1.2.16
+	github.com/uptrace/bun v1.2.17
 	github.com/xraph/forge v0.9.12
 	github.com/xraph/go-utils v0.0.11
 	github.com/xraph/vessel v0.0.5
@@ -85,7 +85,7 @@ require (
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
