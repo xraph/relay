@@ -4,8 +4,8 @@
 .DEFAULT_GOAL := help
 
 # Variables
-BINARY_NAME=dispatch
-CMD_DIR=./cmd/dispatch
+BINARY_NAME=relay
+CMD_DIR=./cmd/relay
 BUILD_DIR=./bin
 GO=go
 GOFLAGS=-v
@@ -100,7 +100,7 @@ clean c:
 fmt f:
 	@echo "$(BLUE)Formatting code...$(NC)"
 	@gofmt -s -w .
-	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/ctrlplane . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
+	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/relay . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
 	@echo "$(GREEN)✓ Formatting complete$(NC)"
 
 ## lint (l): Run linter
