@@ -7,18 +7,32 @@ import (
 )
 
 // Config holds configuration for the Relay Forge extension.
+// Fields can be set programmatically via ExtOption functions or loaded from
+// YAML configuration files (under "extensions.relay" or "relay" keys).
 type Config struct {
 	// Config embeds the core relay configuration.
-	relay.Config
+	relay.Config `json:",inline" yaml:",inline" mapstructure:",squash"`
 
-	// Prefix is the URL prefix for all relay webhook routes (default: "/webhooks").
-	Prefix string `default:"/webhooks" json:"prefix"`
+	// BasePath is the URL prefix for all relay webhook routes (default: "/webhooks").
+	BasePath string `json:"base_path" yaml:"base_path" mapstructure:"base_path"`
 
 	// DisableRoutes disables automatic route registration with the Forge router.
-	DisableRoutes bool `default:"false" json:"disable_routes"`
+	DisableRoutes bool `json:"disable_routes" yaml:"disable_routes" mapstructure:"disable_routes"`
 
-	// DisableMigrations disables automatic database migration on Register.
-	DisableMigrations bool `default:"false" json:"disable_migrations"`
+	// DisableMigrate disables automatic database migration on Register.
+	DisableMigrate bool `json:"disable_migrate" yaml:"disable_migrate" mapstructure:"disable_migrate"`
+
+	// RequireConfig requires config to be present in YAML files.
+	// If true and no config is found, Register returns an error.
+	RequireConfig bool `json:"-" yaml:"-"`
+}
+
+// DefaultConfig returns a Config with sensible defaults.
+func DefaultConfig() Config {
+	return Config{
+		Config:   relay.DefaultConfig(),
+		BasePath: "/webhooks",
+	}
 }
 
 // ToRelayOptions converts the embedded Config into relay.Option values.

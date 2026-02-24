@@ -19,7 +19,11 @@ import (
 
 // ExtensionName is the name registered with Forge.
 const ExtensionName = "relay"
+
+// ExtensionDescription is the human-readable description.
 const ExtensionDescription = "Composable webhook delivery engine with guaranteed delivery and DLQ"
+
+// ExtensionVersion is the semantic version.
 const ExtensionVersion = "0.1.0"
 
 // Ensure Extension implements forge.Extension at compile time.
@@ -29,6 +33,8 @@ var _ forge.Extension = (*Extension)(nil)
 // It implements the forge.Extension interface for full Forge lifecycle integration
 // including registration, migration, route mounting, and graceful shutdown.
 type Extension struct {
+	*forge.BaseExtension
+
 	config Config
 	r      *relay.Relay
 	api    *api.ForgeAPI
@@ -37,31 +43,13 @@ type Extension struct {
 
 // New creates a Relay Forge extension with the given options.
 func New(opts ...ExtOption) *Extension {
-	ext := &Extension{}
+	ext := &Extension{
+		BaseExtension: forge.NewBaseExtension(ExtensionName, ExtensionVersion, ExtensionDescription),
+	}
 	for _, opt := range opts {
 		opt(ext)
 	}
 	return ext
-}
-
-// Name returns the extension name.
-func (e *Extension) Name() string {
-	return ExtensionName
-}
-
-// Description returns a human-readable description.
-func (e *Extension) Description() string {
-	return ExtensionDescription
-}
-
-// Version implements [forge.Extension].
-func (e *Extension) Version() string {
-	return ExtensionVersion
-}
-
-// Dependencies returns the list of extension names this extension depends on.
-func (e *Extension) Dependencies() []string {
-	return []string{}
 }
 
 // Relay returns the underlying Relay instance.
@@ -76,9 +64,17 @@ func (e *Extension) API() *api.ForgeAPI {
 }
 
 // Register implements [forge.Extension].
-// It initializes Relay, runs migrations, registers routes, and provides
-// the Relay instance to the DI container.
+// It loads configuration, initializes Relay, runs migrations, registers routes,
+// and provides the Relay instance to the DI container.
 func (e *Extension) Register(fapp forge.App) error {
+	if err := e.BaseExtension.Register(fapp); err != nil {
+		return err
+	}
+
+	if err := e.loadConfiguration(); err != nil {
+		return err
+	}
+
 	if err := e.Init(fapp); err != nil {
 		return err
 	}
@@ -109,7 +105,7 @@ func (e *Extension) Init(fapp forge.App) error {
 	}
 
 	// Run migrations if not disabled.
-	if !e.config.DisableMigrations {
+	if !e.config.DisableMigrate {
 		if err := e.r.Store().Migrate(context.Background()); err != nil {
 			return err
 		}
@@ -118,11 +114,11 @@ func (e *Extension) Init(fapp forge.App) error {
 	// Set up Forge API.
 	e.api = api.NewForgeAPI(e.r.Store(), e.r.Catalog(), e.r.Endpoints(), e.r.DLQ(), e.r, fapp.Logger())
 	if !e.config.DisableRoutes {
-		prefix := e.config.Prefix
-		if prefix == "" {
-			prefix = "/webhooks"
+		basePath := e.config.BasePath
+		if basePath == "" {
+			basePath = "/webhooks"
 		}
-		e.api.RegisterRoutes(fapp.Router().Group(prefix))
+		e.api.RegisterRoutes(fapp.Router().Group(basePath))
 	}
 
 	return nil
@@ -130,6 +126,7 @@ func (e *Extension) Init(fapp forge.App) error {
 
 // Start begins the delivery engine.
 func (e *Extension) Start(ctx context.Context) error {
+	e.MarkStarted()
 	e.r.Start(ctx)
 	return nil
 }
@@ -137,6 +134,7 @@ func (e *Extension) Start(ctx context.Context) error {
 // Stop gracefully shuts down the delivery engine.
 func (e *Extension) Stop(ctx context.Context) error {
 	e.r.Stop(ctx)
+	e.MarkStopped()
 	return nil
 }
 
@@ -166,10 +164,160 @@ func (e *Extension) RegisterRoutes(router forge.Router) {
 	e.api.RegisterRoutes(router)
 }
 
-// Prefix returns the configured URL prefix.
-func (e *Extension) Prefix() string {
-	if e.config.Prefix == "" {
+// BasePath returns the configured URL base path.
+func (e *Extension) BasePath() string {
+	if e.config.BasePath == "" {
 		return "/webhooks"
 	}
-	return e.config.Prefix
+	return e.config.BasePath
+}
+
+// Prefix returns the configured URL prefix.
+// Deprecated: Use BasePath instead.
+func (e *Extension) Prefix() string {
+	return e.BasePath()
+}
+
+// --- Config Loading (mirrors grove extension pattern) ---
+
+// loadConfiguration loads config from YAML files or programmatic sources.
+func (e *Extension) loadConfiguration() error {
+	programmaticConfig := e.config
+
+	// Try loading from config file.
+	fileConfig, configLoaded := e.tryLoadFromConfigFile()
+
+	if !configLoaded {
+		if programmaticConfig.RequireConfig {
+			return errors.New("relay: configuration is required but not found in config files; " +
+				"ensure 'extensions.relay' or 'relay' key exists in your config")
+		}
+
+		// Use programmatic config merged with defaults.
+		e.config = e.mergeWithDefaults(programmaticConfig)
+	} else {
+		// Config loaded from YAML -- merge with programmatic options.
+		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
+	}
+
+	e.Logger().Debug("relay: configuration loaded",
+		forge.F("disable_routes", e.config.DisableRoutes),
+		forge.F("disable_migrate", e.config.DisableMigrate),
+		forge.F("base_path", e.config.BasePath),
+	)
+
+	return nil
+}
+
+// tryLoadFromConfigFile attempts to load config from YAML files.
+func (e *Extension) tryLoadFromConfigFile() (Config, bool) {
+	cm := e.App().Config()
+	var cfg Config
+
+	// Try "extensions.relay" first (namespaced pattern).
+	if cm.IsSet("extensions.relay") {
+		if err := cm.Bind("extensions.relay", &cfg); err == nil {
+			e.Logger().Debug("relay: loaded config from file",
+				forge.F("key", "extensions.relay"),
+			)
+			return cfg, true
+		}
+		e.Logger().Warn("relay: failed to bind extensions.relay config",
+			forge.F("error", "bind failed"),
+		)
+	}
+
+	// Try legacy "relay" key.
+	if cm.IsSet("relay") {
+		if err := cm.Bind("relay", &cfg); err == nil {
+			e.Logger().Debug("relay: loaded config from file",
+				forge.F("key", "relay"),
+			)
+			return cfg, true
+		}
+		e.Logger().Warn("relay: failed to bind relay config",
+			forge.F("error", "bind failed"),
+		)
+	}
+
+	return Config{}, false
+}
+
+// mergeWithDefaults fills zero-valued fields with defaults.
+func (e *Extension) mergeWithDefaults(cfg Config) Config {
+	defaults := DefaultConfig()
+	if cfg.BasePath == "" {
+		cfg.BasePath = defaults.BasePath
+	}
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = defaults.Concurrency
+	}
+	if cfg.PollInterval == 0 {
+		cfg.PollInterval = defaults.PollInterval
+	}
+	if cfg.BatchSize == 0 {
+		cfg.BatchSize = defaults.BatchSize
+	}
+	if cfg.RequestTimeout == 0 {
+		cfg.RequestTimeout = defaults.RequestTimeout
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = defaults.MaxRetries
+	}
+	if len(cfg.RetrySchedule) == 0 {
+		cfg.RetrySchedule = defaults.RetrySchedule
+	}
+	if cfg.ShutdownTimeout == 0 {
+		cfg.ShutdownTimeout = defaults.ShutdownTimeout
+	}
+	if cfg.CacheTTL == 0 {
+		cfg.CacheTTL = defaults.CacheTTL
+	}
+	return cfg
+}
+
+// mergeConfigurations merges YAML config with programmatic options.
+// YAML config takes precedence for most fields; programmatic bool flags fill gaps.
+func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) Config {
+	// Programmatic bool flags override when true.
+	if programmaticConfig.DisableRoutes {
+		yamlConfig.DisableRoutes = true
+	}
+	if programmaticConfig.DisableMigrate {
+		yamlConfig.DisableMigrate = true
+	}
+
+	// String fields: YAML takes precedence.
+	if yamlConfig.BasePath == "" && programmaticConfig.BasePath != "" {
+		yamlConfig.BasePath = programmaticConfig.BasePath
+	}
+
+	// Duration/int fields: YAML takes precedence, programmatic fills gaps.
+	if yamlConfig.Concurrency == 0 && programmaticConfig.Concurrency != 0 {
+		yamlConfig.Concurrency = programmaticConfig.Concurrency
+	}
+	if yamlConfig.PollInterval == 0 && programmaticConfig.PollInterval != 0 {
+		yamlConfig.PollInterval = programmaticConfig.PollInterval
+	}
+	if yamlConfig.BatchSize == 0 && programmaticConfig.BatchSize != 0 {
+		yamlConfig.BatchSize = programmaticConfig.BatchSize
+	}
+	if yamlConfig.RequestTimeout == 0 && programmaticConfig.RequestTimeout != 0 {
+		yamlConfig.RequestTimeout = programmaticConfig.RequestTimeout
+	}
+	if yamlConfig.MaxRetries == 0 && programmaticConfig.MaxRetries != 0 {
+		yamlConfig.MaxRetries = programmaticConfig.MaxRetries
+	}
+	if len(yamlConfig.RetrySchedule) == 0 && len(programmaticConfig.RetrySchedule) > 0 {
+		yamlConfig.RetrySchedule = programmaticConfig.RetrySchedule
+	}
+	if yamlConfig.ShutdownTimeout == 0 && programmaticConfig.ShutdownTimeout != 0 {
+		yamlConfig.ShutdownTimeout = programmaticConfig.ShutdownTimeout
+	}
+	if yamlConfig.CacheTTL == 0 && programmaticConfig.CacheTTL != 0 {
+		yamlConfig.CacheTTL = programmaticConfig.CacheTTL
+	}
+
+	// Fill remaining zeros with defaults.
+	return e.mergeWithDefaults(yamlConfig)
 }

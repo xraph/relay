@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/uptrace/bun"
+	"github.com/xraph/grove"
 
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
@@ -19,22 +19,22 @@ import (
 // --- Event Type models ---
 
 type eventTypeModel struct {
-	bun.BaseModel `bun:"table:relay_event_types"`
+	grove.BaseModel `grove:"table:relay_event_types"`
 
-	ID            string            `bun:"id,pk"`
-	Name          string            `bun:"name,unique"`
-	Description   string            `bun:"description"`
-	GroupName     string            `bun:"group_name"`
-	Schema        json.RawMessage   `bun:"schema,type:jsonb"`
-	SchemaVersion string            `bun:"schema_version"`
-	Version       string            `bun:"version"`
-	Example       json.RawMessage   `bun:"example,type:jsonb"`
-	IsDeprecated  bool              `bun:"is_deprecated"`
-	DeprecatedAt  *time.Time        `bun:"deprecated_at"`
-	ScopeAppID    string            `bun:"scope_app_id"`
-	Metadata      map[string]string `bun:"metadata,type:jsonb"`
-	CreatedAt     time.Time         `bun:"created_at"`
-	UpdatedAt     time.Time         `bun:"updated_at"`
+	ID            string            `grove:"id,pk"`
+	Name          string            `grove:"name,unique"`
+	Description   string            `grove:"description"`
+	GroupName     string            `grove:"group_name"`
+	Schema        json.RawMessage   `grove:"schema,type:jsonb"`
+	SchemaVersion string            `grove:"schema_version"`
+	Version       string            `grove:"version"`
+	Example       json.RawMessage   `grove:"example,type:jsonb"`
+	IsDeprecated  bool              `grove:"is_deprecated"`
+	DeprecatedAt  *time.Time        `grove:"deprecated_at"`
+	ScopeAppID    string            `grove:"scope_app_id"`
+	Metadata      map[string]string `grove:"metadata,type:jsonb"`
+	CreatedAt     time.Time         `grove:"created_at"`
+	UpdatedAt     time.Time         `grove:"updated_at"`
 }
 
 func toEventTypeModel(et *catalog.EventType) *eventTypeModel {
@@ -86,20 +86,20 @@ func fromEventTypeModel(m *eventTypeModel) (*catalog.EventType, error) {
 // --- Endpoint models ---
 
 type endpointModel struct {
-	bun.BaseModel `bun:"table:relay_endpoints"`
+	grove.BaseModel `grove:"table:relay_endpoints"`
 
-	ID          string            `bun:"id,pk"`
-	TenantID    string            `bun:"tenant_id"`
-	URL         string            `bun:"url"`
-	Description string            `bun:"description"`
-	Secret      string            `bun:"secret"`
-	EventTypes  []string          `bun:"event_types,array"`
-	Headers     map[string]string `bun:"headers,type:jsonb"`
-	Enabled     bool              `bun:"enabled"`
-	RateLimit   int               `bun:"rate_limit"`
-	Metadata    map[string]string `bun:"metadata,type:jsonb"`
-	CreatedAt   time.Time         `bun:"created_at"`
-	UpdatedAt   time.Time         `bun:"updated_at"`
+	ID          string            `grove:"id,pk"`
+	TenantID    string            `grove:"tenant_id"`
+	URL         string            `grove:"url"`
+	Description string            `grove:"description"`
+	Secret      string            `grove:"secret"`
+	EventTypes  []string          `grove:"event_types,array"`
+	Headers     map[string]string `grove:"headers,type:jsonb"`
+	Enabled     bool              `grove:"enabled"`
+	RateLimit   int               `grove:"rate_limit"`
+	Metadata    map[string]string `grove:"metadata,type:jsonb"`
+	CreatedAt   time.Time         `grove:"created_at"`
+	UpdatedAt   time.Time         `grove:"updated_at"`
 }
 
 func toEndpointModel(ep *endpoint.Endpoint) *endpointModel {
@@ -145,17 +145,17 @@ func fromEndpointModel(m *endpointModel) (*endpoint.Endpoint, error) {
 // --- Event models ---
 
 type eventModel struct {
-	bun.BaseModel `bun:"table:relay_events"`
+	grove.BaseModel `grove:"table:relay_events"`
 
-	ID             string          `bun:"id,pk"`
-	Type           string          `bun:"type"`
-	TenantID       string          `bun:"tenant_id"`
-	Data           json.RawMessage `bun:"data,type:jsonb"`
-	IdempotencyKey string          `bun:"idempotency_key"`
-	ScopeAppID     string          `bun:"scope_app_id"`
-	ScopeOrgID     string          `bun:"scope_org_id"`
-	CreatedAt      time.Time       `bun:"created_at"`
-	UpdatedAt      time.Time       `bun:"updated_at"`
+	ID             string          `grove:"id,pk"`
+	Type           string          `grove:"type"`
+	TenantID       string          `grove:"tenant_id"`
+	Data           json.RawMessage `grove:"data,type:jsonb"`
+	IdempotencyKey string          `grove:"idempotency_key"`
+	ScopeAppID     string          `grove:"scope_app_id"`
+	ScopeOrgID     string          `grove:"scope_org_id"`
+	CreatedAt      time.Time       `grove:"created_at"`
+	UpdatedAt      time.Time       `grove:"updated_at"`
 }
 
 func toEventModel(evt *event.Event) *eventModel {
@@ -197,22 +197,22 @@ func fromEventModel(m *eventModel) (*event.Event, error) {
 // --- Delivery models ---
 
 type deliveryModel struct {
-	bun.BaseModel `bun:"table:relay_deliveries"`
+	grove.BaseModel `grove:"table:relay_deliveries"`
 
-	ID             string     `bun:"id,pk"`
-	EventID        string     `bun:"event_id"`
-	EndpointID     string     `bun:"endpoint_id"`
-	State          string     `bun:"state"`
-	AttemptCount   int        `bun:"attempt_count"`
-	MaxAttempts    int        `bun:"max_attempts"`
-	NextAttemptAt  time.Time  `bun:"next_attempt_at"`
-	LastError      string     `bun:"last_error"`
-	LastStatusCode int        `bun:"last_status_code"`
-	LastResponse   string     `bun:"last_response"`
-	LastLatencyMs  int        `bun:"last_latency_ms"`
-	CompletedAt    *time.Time `bun:"completed_at"`
-	CreatedAt      time.Time  `bun:"created_at"`
-	UpdatedAt      time.Time  `bun:"updated_at"`
+	ID             string     `grove:"id,pk"`
+	EventID        string     `grove:"event_id"`
+	EndpointID     string     `grove:"endpoint_id"`
+	State          string     `grove:"state"`
+	AttemptCount   int        `grove:"attempt_count"`
+	MaxAttempts    int        `grove:"max_attempts"`
+	NextAttemptAt  time.Time  `grove:"next_attempt_at"`
+	LastError      string     `grove:"last_error"`
+	LastStatusCode int        `grove:"last_status_code"`
+	LastResponse   string     `grove:"last_response"`
+	LastLatencyMs  int        `grove:"last_latency_ms"`
+	CompletedAt    *time.Time `grove:"completed_at"`
+	CreatedAt      time.Time  `grove:"created_at"`
+	UpdatedAt      time.Time  `grove:"updated_at"`
 }
 
 func toDeliveryModel(d *delivery.Delivery) *deliveryModel {
@@ -270,23 +270,23 @@ func fromDeliveryModel(m *deliveryModel) (*delivery.Delivery, error) {
 // --- DLQ models ---
 
 type dlqEntryModel struct {
-	bun.BaseModel `bun:"table:relay_dlq"`
+	grove.BaseModel `grove:"table:relay_dlq"`
 
-	ID             string     `bun:"id,pk"`
-	DeliveryID     string     `bun:"delivery_id"`
-	EventID        string     `bun:"event_id"`
-	EndpointID     string     `bun:"endpoint_id"`
-	TenantID       string     `bun:"tenant_id"`
-	EventType      string     `bun:"event_type"`
-	URL            string     `bun:"url"`
-	Payload        []byte     `bun:"payload,type:jsonb"`
-	Error          string     `bun:"error"`
-	AttemptCount   int        `bun:"attempt_count"`
-	LastStatusCode int        `bun:"last_status_code"`
-	ReplayedAt     *time.Time `bun:"replayed_at"`
-	FailedAt       time.Time  `bun:"failed_at"`
-	CreatedAt      time.Time  `bun:"created_at"`
-	UpdatedAt      time.Time  `bun:"updated_at"`
+	ID             string     `grove:"id,pk"`
+	DeliveryID     string     `grove:"delivery_id"`
+	EventID        string     `grove:"event_id"`
+	EndpointID     string     `grove:"endpoint_id"`
+	TenantID       string     `grove:"tenant_id"`
+	EventType      string     `grove:"event_type"`
+	URL            string     `grove:"url"`
+	Payload        []byte     `grove:"payload,type:jsonb"`
+	Error          string     `grove:"error"`
+	AttemptCount   int        `grove:"attempt_count"`
+	LastStatusCode int        `grove:"last_status_code"`
+	ReplayedAt     *time.Time `grove:"replayed_at"`
+	FailedAt       time.Time  `grove:"failed_at"`
+	CreatedAt      time.Time  `grove:"created_at"`
+	UpdatedAt      time.Time  `grove:"updated_at"`
 }
 
 func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {

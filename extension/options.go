@@ -15,11 +15,17 @@ func WithStore(s store.Store) ExtOption {
 	}
 }
 
-// WithPrefix sets the URL prefix for all relay webhook routes.
-func WithPrefix(prefix string) ExtOption {
+// WithBasePath sets the URL prefix for all relay webhook routes.
+func WithBasePath(path string) ExtOption {
 	return func(e *Extension) {
-		e.config.Prefix = prefix
+		e.config.BasePath = path
 	}
+}
+
+// WithPrefix sets the URL prefix for all relay webhook routes.
+// Deprecated: Use WithBasePath instead.
+func WithPrefix(prefix string) ExtOption {
+	return WithBasePath(prefix)
 }
 
 // WithConfig sets the extension configuration directly.
@@ -43,9 +49,23 @@ func WithDisableRoutes() ExtOption {
 	}
 }
 
-// WithDisableMigrations disables automatic database migration on Register.
-func WithDisableMigrations() ExtOption {
+// WithDisableMigrate disables automatic database migration on Register.
+func WithDisableMigrate() ExtOption {
 	return func(e *Extension) {
-		e.config.DisableMigrations = true
+		e.config.DisableMigrate = true
+	}
+}
+
+// WithDisableMigrations disables automatic database migration on Register.
+// Deprecated: Use WithDisableMigrate instead.
+func WithDisableMigrations() ExtOption {
+	return WithDisableMigrate()
+}
+
+// WithRequireConfig requires configuration to be present in YAML files.
+// If true and no config is found, Register returns an error.
+func WithRequireConfig(require bool) ExtOption {
+	return func(e *Extension) {
+		e.config.RequireConfig = require
 	}
 }
