@@ -1,0 +1,90 @@
+---
+title: MongoDB Store
+description: MongoDB store for document-oriented deployments.
+---
+
+The MongoDB store uses [Grove ORM](https://github.com/xraph/grove) with the `mongodriver` for database access. It stores each entity type in a dedicated collection and uses MongoDB indexes for efficient querying.
+
+## Usage
+
+### Standalone
+
+```go
+import (
+    "github.com/xraph/grove"
+    _ "github.com/xraph/grove/drivers/mongodriver"
+    mongostore "github.com/xraph/relay/store/mongo"
+)
+
+db, err := grove.Open("mongo", "mongodb://localhost:27017/relay")
+if err != nil {
+    log.Fatal(err)
+}
+
+s := mongostore.New(db)
+
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+
+r, err := relay.New(relay.WithStore(s))
+```
+
+### With Forge extension
+
+When using the Forge extension with Grove, the store is auto-constructed from the DI container based on the driver type:
+
+```go
+app.Use(extension.New(
+    extension.WithGroveDatabase(""),  // uses the default grove.DB
+))
+```
+
+Or via YAML config:
+
+```yaml
+extensions:
+  relay:
+    grove_database: ""
+```
+
+The extension detects the `mongo` driver automatically and constructs the correct store.
+
+## Collections
+
+The store uses five collections, all prefixed with `relay_`:
+
+| Collection | Purpose |
+|-----------|---------|
+| `relay_event_types` | Event type catalog definitions |
+| `relay_endpoints` | Webhook endpoint registrations |
+| `relay_events` | Inbound event records |
+| `relay_deliveries` | Delivery queue entries |
+| `relay_dlq` | Dead letter queue entries |
+
+## Migrations
+
+`Migrate()` creates indexes on all collections. Key indexes include:
+
+- **Event types**: unique index on `name`, indexes on `group_name` and `created_at`
+- **Endpoints**: compound indexes on `(tenant_id, enabled)` and `(tenant_id, created_at)`
+- **Events**: compound index on `(tenant_id, type, created_at)`, sparse unique index on `idempotency_key`
+- **Deliveries**: compound index on `(state, next_attempt_at)` for efficient dequeue, plus indexes on `endpoint_id` and `event_id`
+- **DLQ**: compound index on `(tenant_id, failed_at)`, index on `endpoint_id`
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | Grove ORM with `mongodriver` (mongo-driver v2) |
+| Migrations | Index creation via `CreateMany` |
+| Dequeue | `FindOneAndUpdate` with state filter |
+| Transactions | MongoDB single-document atomicity |
+| Ping | `db.Ping(ctx)` |
+| Close | Closes the Grove connection |
+
+## When to use
+
+- When your infrastructure is MongoDB-centric.
+- Document-oriented data models where JSON flexibility is preferred.
+- Horizontal scaling via MongoDB sharding.

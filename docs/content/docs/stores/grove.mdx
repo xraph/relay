@@ -1,40 +1,96 @@
 ---
-title: Grove Store
-description: SQL store using grove ORM.
+title: Grove Integration
+description: How Relay stores use Grove ORM and Grove KV for database access.
 ---
 
-The Grove store uses the [Grove](https://github.com/xraph/forgery/grove) ORM for database access. It provides struct-based models and supports PostgreSQL.
+All Relay persistence backends are built on [Grove](https://github.com/xraph/grove) -- the ORM and KV abstraction layer used across the Forge ecosystem. This means every store follows the same patterns for connection management, migrations, and DI integration.
 
-## Usage
+## Architecture
+
+Relay's stores fall into two categories based on the Grove layer they use:
+
+| Layer | Stores | Description |
+|-------|--------|-------------|
+| **Grove ORM** (`grove.DB`) | [PostgreSQL](/docs/stores/postgres), [SQLite](/docs/stores/sqlite), [MongoDB](/docs/stores/mongo) | Struct-based models with query builders and the Grove migrator |
+| **Grove KV** (`kv.Store`) | [Redis](/docs/stores/redis) | Key-value storage with JSON-serialized entities and sorted set indexes |
+
+## Constructor pattern
+
+Every store accepts a Grove connection and returns a `store.Store`:
 
 ```go
-import "github.com/xraph/relay/store/grovestore"
+// SQL stores accept *grove.DB
+pgStore    := pgstore.New(db)
+sqlStore   := sqlitestore.New(db)
+mongoStore := mongostore.New(db)
 
-s, err := grovestore.New(grovestore.Config{
-    DSN: "postgres://user:pass@localhost:5432/relay?sslmode=disable",
-})
-if err != nil {
-    log.Fatal(err)
-}
-
-if err := s.Migrate(ctx); err != nil {
-    log.Fatal(err)
-}
-
-r, err := relay.New(relay.WithStore(s))
+// KV stores accept *kv.Store
+redisStore := redisstore.New(kvStore)
 ```
 
-## Internals
+## Auto-detection with Forge
 
-| Aspect | Detail |
-|--------|--------|
-| ORM | Grove ORM with struct-based models |
-| Migrations | Grove migrator with Go-defined migrations |
-| Transactions | Database-level ACID |
-| Ping | `db.PingContext(ctx)` |
-| Close | Closes the connection pool |
+When using the Forge extension, you don't need to import individual store packages. The extension resolves a `grove.DB` or `kv.Store` from the DI container and auto-constructs the correct store based on the driver type:
 
-## When to use
+```go
+// Detects pg/sqlite/mongo driver and builds the right store
+app.Use(extension.New(
+    extension.WithGroveDatabase(""),
+))
 
-- When you prefer an ORM over raw SQL.
-- Teams using grove in their Forge stack.
+// Or for Redis via KV
+app.Use(extension.New(
+    extension.WithGroveKV(""),
+))
+```
+
+The driver detection maps:
+
+| Grove driver | Store package |
+|-------------|---------------|
+| `pg` | `store/postgres` |
+| `sqlite` | `store/sqlite` |
+| `mongo` | `store/mongo` |
+| Redis (via KV) | `store/redis` |
+
+## Named databases
+
+In multi-database Forge apps, reference a specific Grove database by name:
+
+```go
+extension.WithGroveDatabase("webhooks")   // named DB
+extension.WithGroveKV("relay-cache")      // named KV
+```
+
+Or via YAML:
+
+```yaml
+extensions:
+  relay:
+    grove_database: webhooks
+    grove_kv: relay-cache
+```
+
+## Store resolution order
+
+The extension resolves its store in this order:
+
+1. **Explicit store** -- if `relay.WithStore(s)` was passed as an option, it is used directly.
+2. **Grove database** -- if `WithGroveDatabase` was called (or `grove_database` is set in YAML), the named or default `grove.DB` is resolved from DI and the driver type determines the store.
+3. **Grove KV** -- if `WithGroveKV` was called (or `grove_kv` is set in YAML), the named or default `kv.Store` is resolved from DI.
+4. **Fallback** -- if none of the above is configured, no store is set and `relay.New()` returns `ErrNoStore` unless a store was provided via other means.
+
+## Migrations
+
+All Grove ORM stores use the Grove migrator (`grove/migrate`). Each store registers a migration group named `"relay"`:
+
+```go
+var Migrations = migrate.NewGroup("relay")
+```
+
+The Grove migrator supports:
+- Version tracking in a `_migrations` table
+- Up/down migration functions
+- Orchestrated execution with locking
+
+The Redis store does not require migrations (keys are created on demand).

@@ -1,0 +1,87 @@
+---
+title: SQLite Store
+description: Embedded SQLite store for single-process and edge deployments.
+---
+
+The SQLite store uses [Grove ORM](https://github.com/xraph/grove) with the `sqlitedriver` for embedded database access. It is ideal for single-process deployments, edge environments, and applications that need persistence without an external database server.
+
+## Usage
+
+### Standalone
+
+```go
+import (
+    "github.com/xraph/grove"
+    _ "github.com/xraph/grove/drivers/sqlitedriver"
+    sqlitestore "github.com/xraph/relay/store/sqlite"
+)
+
+db, err := grove.Open("sqlite", "relay.db")
+if err != nil {
+    log.Fatal(err)
+}
+
+s := sqlitestore.New(db)
+
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+
+r, err := relay.New(relay.WithStore(s))
+```
+
+### With Forge extension
+
+When using the Forge extension with Grove, the store is auto-constructed from the DI container based on the driver type:
+
+```go
+app.Use(extension.New(
+    extension.WithGroveDatabase(""),  // uses the default grove.DB
+))
+```
+
+Or via YAML config:
+
+```yaml
+extensions:
+  relay:
+    grove_database: ""
+```
+
+The extension detects the `sqlite` driver automatically and constructs the correct store.
+
+## Migrations
+
+Call `s.Migrate(ctx)` before first use. Migrations are managed by the Grove migrator and create the same five tables as the PostgreSQL store, adapted for SQLite:
+
+- `relay_event_types` -- event type catalog
+- `relay_endpoints` -- webhook endpoints
+- `relay_events` -- inbound events
+- `relay_deliveries` -- delivery queue
+- `relay_dlq` -- dead letter queue
+
+SQLite-specific differences from PostgreSQL:
+- Booleans stored as `INTEGER` (0/1)
+- Timestamps stored as `TEXT` using `datetime('now')`
+- JSON fields stored as `TEXT`
+- No `FOR UPDATE SKIP LOCKED` -- SQLite serializes writes via WAL mode
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | Grove ORM with `sqlitedriver` |
+| Migrations | Grove migrator with Go-defined migrations |
+| Dequeue | WAL-mode serialized writes (no row locking needed) |
+| Transactions | SQLite ACID transactions |
+| JSON fields | `TEXT` (serialized JSON) |
+| Timestamps | `TEXT` (ISO 8601 via `datetime('now')`) |
+| Ping | `db.Ping(ctx)` |
+| Close | Closes the Grove connection |
+
+## When to use
+
+- Single-process deployments where an external database is not desired.
+- Edge or embedded applications.
+- Local development with persistence (survives restarts, unlike the memory store).
+- CI/CD pipelines and integration tests that need a real SQL backend without infrastructure.

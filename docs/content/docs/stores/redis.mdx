@@ -1,0 +1,110 @@
+---
+title: Redis Store
+description: Redis store for high-throughput, low-latency deployments.
+---
+
+The Redis store uses [Grove KV](https://github.com/xraph/grove) with the `redisdriver` for key-value storage. It stores entities as JSON blobs and uses Redis sorted sets and sets for indexing and querying.
+
+## Usage
+
+### Standalone
+
+```go
+import (
+    "github.com/xraph/grove/kv"
+    _ "github.com/xraph/grove/kv/drivers/redisdriver"
+    redisstore "github.com/xraph/relay/store/redis"
+)
+
+store, err := kv.Open("redis", "redis://localhost:6379/0")
+if err != nil {
+    log.Fatal(err)
+}
+
+s := redisstore.New(store)
+
+r, err := relay.New(relay.WithStore(s))
+```
+
+### With Forge extension
+
+When using the Forge extension with Grove KV, the store is resolved from the DI container:
+
+```go
+app.Use(extension.New(
+    extension.WithGroveKV(""),  // uses the default grove kv.Store
+))
+```
+
+Or via YAML config:
+
+```yaml
+extensions:
+  relay:
+    grove_kv: ""
+```
+
+## Data model
+
+Entities are stored as JSON blobs under prefixed keys. Indexes use Redis sorted sets (scored by timestamp) and sets for efficient lookup.
+
+### Key prefixes
+
+| Prefix | Purpose |
+|--------|---------|
+| `relay:evtype:<id>` | Event type entity |
+| `relay:ep:<id>` | Endpoint entity |
+| `relay:evt:<id>` | Event entity |
+| `relay:del:<id>` | Delivery entity |
+| `relay:dlq:<id>` | DLQ entry entity |
+
+### Index keys
+
+| Key pattern | Type | Purpose |
+|-------------|------|---------|
+| `relay:z:evtype:all` | Sorted set | All event types by creation time |
+| `relay:z:ep:tenant:<tid>` | Sorted set | Endpoints per tenant |
+| `relay:z:evt:all` | Sorted set | All events by creation time |
+| `relay:z:evt:tenant:<tid>` | Sorted set | Events per tenant |
+| `relay:z:del:pending` | Sorted set | Pending deliveries by `next_attempt_at` |
+| `relay:z:del:ep:<eid>` | Sorted set | Deliveries per endpoint |
+| `relay:z:dlq:all` | Sorted set | All DLQ entries by failure time |
+| `relay:s:evtype:active` | Set | Active (non-deprecated) event type IDs |
+| `relay:s:ep:tenant:<tid>:enabled` | Set | Enabled endpoint IDs per tenant |
+
+### Unique constraints
+
+| Key pattern | Purpose |
+|-------------|---------|
+| `relay:u:evtype:name:<name>` | Event type name uniqueness |
+| `relay:u:evt:idem:<key>` | Idempotency key uniqueness |
+
+## Migrations
+
+`Migrate()` is a no-op -- Redis does not require schema migrations. Keys and indexes are created on demand as entities are stored.
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | Grove KV with `redisdriver` (go-redis v9) |
+| Migrations | No-op |
+| Dequeue | Sorted set range + atomic key update |
+| Transactions | Redis single-key atomicity |
+| JSON fields | All entities stored as JSON blobs |
+| Pagination | Client-side offset/limit on sorted set results |
+| Ping | `kv.Ping(ctx)` |
+| Close | Closes the KV store |
+
+## When to use
+
+- High-throughput, low-latency delivery pipelines.
+- When Redis is already part of your infrastructure.
+- Ephemeral or cache-friendly workloads where Redis persistence (RDB/AOF) is acceptable.
+- Workloads that benefit from Redis clustering for horizontal scaling.
+
+## Limitations
+
+- No multi-key transactions -- operations are atomic per key only.
+- Pagination is applied client-side after fetching sorted set members.
+- Data durability depends on Redis persistence configuration (RDB, AOF, or none).

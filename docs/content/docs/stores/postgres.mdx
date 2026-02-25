@@ -1,19 +1,27 @@
 ---
 title: PostgreSQL Store
-description: Production-ready PostgreSQL store using pgx/v5.
+description: Production-ready PostgreSQL store using Grove ORM.
 ---
 
-The PostgreSQL store uses `pgx/v5` for direct database access. It is the recommended store for production deployments.
+The PostgreSQL store uses [Grove ORM](https://github.com/xraph/grove) with the `pgdriver` for database access. It is the recommended store for production deployments that need ACID transactions and full SQL query power.
 
 ## Usage
 
-```go
-import "github.com/xraph/relay/store/postgres"
+### Standalone
 
-s, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/relay?sslmode=disable")
+```go
+import (
+    "github.com/xraph/grove"
+    _ "github.com/xraph/grove/drivers/pgdriver"
+    pgstore "github.com/xraph/relay/store/postgres"
+)
+
+db, err := grove.Open("pg", "postgres://user:pass@localhost:5432/relay?sslmode=disable")
 if err != nil {
     log.Fatal(err)
 }
+
+s := pgstore.New(db)
 
 if err := s.Migrate(ctx); err != nil {
     log.Fatal(err)
@@ -22,26 +30,51 @@ if err := s.Migrate(ctx); err != nil {
 r, err := relay.New(relay.WithStore(s))
 ```
 
-## Configuration
+### With Forge extension
 
-The store accepts a PostgreSQL connection string. Connection pooling is handled by pgx.
+When using the Forge extension with Grove, the store is auto-constructed from the DI container:
+
+```go
+app.Use(extension.New(
+    extension.WithGroveDatabase(""),  // uses the default grove.DB
+))
+```
+
+Or via YAML config:
+
+```yaml
+extensions:
+  relay:
+    grove_database: ""
+```
+
+See the [Forge Extension guide](/docs/guides/forge-extension) for details.
 
 ## Migrations
 
-Call `s.Migrate(ctx)` before first use. This creates all required tables and indexes.
+Call `s.Migrate(ctx)` before first use. Migrations are managed by the Grove migrator with Go-defined migration functions. The migration group is named `"relay"` and creates five tables:
+
+- `relay_event_types` -- event type catalog
+- `relay_endpoints` -- webhook endpoints
+- `relay_events` -- inbound events
+- `relay_deliveries` -- delivery queue with `FOR UPDATE SKIP LOCKED` dequeue
+- `relay_dlq` -- dead letter queue
 
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
-| Driver | pgx/v5 with connection pool |
-| Migrations | Auto-create tables on `Migrate()` |
+| Driver | Grove ORM with `pgdriver` |
+| Migrations | Grove migrator with Go-defined migrations |
+| Dequeue | `FOR UPDATE SKIP LOCKED` for concurrent delivery polling |
 | Transactions | Database-level ACID |
-| Ping | `pool.Ping(ctx)` |
-| Close | Closes the connection pool |
+| JSON fields | `JSONB` for schema, metadata, headers, payload |
+| Timestamps | `TIMESTAMPTZ` |
+| Ping | `db.Ping(ctx)` |
+| Close | Closes the Grove connection |
 
 ## When to use
 
-- Production deployments.
-- When you need ACID transactions and full SQL query power.
-- Multi-process environments.
+- Production deployments requiring durability and ACID guarantees.
+- Multi-process environments with concurrent delivery workers.
+- When you need `FOR UPDATE SKIP LOCKED` for efficient dequeue under concurrency.
