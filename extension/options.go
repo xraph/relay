@@ -23,6 +23,7 @@ func WithBasePath(path string) ExtOption {
 }
 
 // WithPrefix sets the URL prefix for all relay webhook routes.
+//
 // Deprecated: Use WithBasePath instead.
 func WithPrefix(prefix string) ExtOption {
 	return WithBasePath(prefix)
@@ -57,6 +58,7 @@ func WithDisableMigrate() ExtOption {
 }
 
 // WithDisableMigrations disables automatic database migration on Register.
+//
 // Deprecated: Use WithDisableMigrate instead.
 func WithDisableMigrations() ExtOption {
 	return WithDisableMigrate()
@@ -67,5 +69,25 @@ func WithDisableMigrations() ExtOption {
 func WithRequireConfig(require bool) ExtOption {
 	return func(e *Extension) {
 		e.config.RequireConfig = require
+	}
+}
+
+// WithGroveDatabase sets the name of the grove.DB to resolve from the DI container.
+// The extension will auto-construct the appropriate store backend (postgres/sqlite/mongo)
+// based on the grove driver type. Pass an empty string to use the default (unnamed) grove.DB.
+func WithGroveDatabase(name string) ExtOption {
+	return func(e *Extension) {
+		e.config.GroveDatabase = name
+		e.useGrove = true
+	}
+}
+
+// WithGroveKV sets the name of the grove kv.Store to resolve from the DI container.
+// The extension will auto-construct a Redis-backed store from the resolved kv.Store.
+// Pass an empty string to use the default (unnamed) kv.Store.
+func WithGroveKV(name string) ExtOption {
+	return func(e *Extension) {
+		e.config.GroveKV = name
+		e.useGroveKV = true
 	}
 }

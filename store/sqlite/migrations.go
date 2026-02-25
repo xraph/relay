@@ -1,4 +1,4 @@
-package bunstore
+package sqlite
 
 import (
 	"context"
@@ -6,9 +6,7 @@ import (
 	"github.com/xraph/grove/migrate"
 )
 
-// Migrations is the grove migration group for the Relay store.
-// It can be registered with the grove extension for orchestrated migration
-// management (locking, version tracking, rollback support).
+// Migrations is the grove migration group for the Relay store (SQLite).
 var Migrations = migrate.NewGroup("relay")
 
 func init() {
@@ -23,17 +21,20 @@ CREATE TABLE IF NOT EXISTS relay_event_types (
     name            TEXT NOT NULL UNIQUE,
     description     TEXT NOT NULL DEFAULT '',
     group_name      TEXT NOT NULL DEFAULT '',
-    schema          JSONB,
+    schema          TEXT,
     schema_version  TEXT NOT NULL DEFAULT '',
     version         TEXT NOT NULL DEFAULT '',
-    example         JSONB,
-    is_deprecated   BOOLEAN NOT NULL DEFAULT FALSE,
-    deprecated_at   TIMESTAMPTZ,
+    example         TEXT,
+    is_deprecated   INTEGER NOT NULL DEFAULT 0,
+    deprecated_at   TEXT,
     scope_app_id    TEXT NOT NULL DEFAULT '',
-    metadata        JSONB NOT NULL DEFAULT '{}',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_relay_event_types_group ON relay_event_types (group_name);
+CREATE INDEX IF NOT EXISTS idx_relay_event_types_created ON relay_event_types (created_at);
 `)
 				return err
 			},
@@ -53,16 +54,17 @@ CREATE TABLE IF NOT EXISTS relay_endpoints (
     url         TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     secret      TEXT NOT NULL DEFAULT '',
-    event_types TEXT[] NOT NULL DEFAULT '{}',
-    headers     JSONB NOT NULL DEFAULT '{}',
-    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
-    rate_limit  INT NOT NULL DEFAULT 0,
-    metadata    JSONB NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    event_types TEXT NOT NULL DEFAULT '[]',
+    headers     TEXT NOT NULL DEFAULT '{}',
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    rate_limit  INTEGER NOT NULL DEFAULT 0,
+    metadata    TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_relay_endpoints_tenant ON relay_endpoints (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_relay_endpoints_tenant_enabled ON relay_endpoints (tenant_id, enabled);
 `)
 				return err
 			},
@@ -80,12 +82,12 @@ CREATE TABLE IF NOT EXISTS relay_events (
     id              TEXT PRIMARY KEY,
     type            TEXT NOT NULL DEFAULT '',
     tenant_id       TEXT NOT NULL DEFAULT '',
-    data            JSONB,
+    data            TEXT,
     idempotency_key TEXT NOT NULL DEFAULT '',
     scope_app_id    TEXT NOT NULL DEFAULT '',
     scope_org_id    TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_relay_events_tenant ON relay_events (tenant_id);
@@ -109,16 +111,16 @@ CREATE TABLE IF NOT EXISTS relay_deliveries (
     event_id        TEXT NOT NULL DEFAULT '',
     endpoint_id     TEXT NOT NULL DEFAULT '',
     state           TEXT NOT NULL DEFAULT 'pending',
-    attempt_count   INT NOT NULL DEFAULT 0,
-    max_attempts    INT NOT NULL DEFAULT 0,
-    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    max_attempts    INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_error      TEXT NOT NULL DEFAULT '',
-    last_status_code INT NOT NULL DEFAULT 0,
+    last_status_code INTEGER NOT NULL DEFAULT 0,
     last_response   TEXT NOT NULL DEFAULT '',
-    last_latency_ms INT NOT NULL DEFAULT 0,
-    completed_at    TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    last_latency_ms INTEGER NOT NULL DEFAULT 0,
+    completed_at    TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_relay_deliveries_pending ON relay_deliveries (next_attempt_at) WHERE state = 'pending';
@@ -145,17 +147,18 @@ CREATE TABLE IF NOT EXISTS relay_dlq (
     tenant_id       TEXT NOT NULL DEFAULT '',
     event_type      TEXT NOT NULL DEFAULT '',
     url             TEXT NOT NULL DEFAULT '',
-    payload         JSONB,
+    payload         TEXT,
     error           TEXT NOT NULL DEFAULT '',
-    attempt_count   INT NOT NULL DEFAULT 0,
-    last_status_code INT NOT NULL DEFAULT 0,
-    replayed_at     TIMESTAMPTZ,
-    failed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    last_status_code INTEGER NOT NULL DEFAULT 0,
+    replayed_at     TEXT,
+    failed_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_relay_dlq_tenant ON relay_dlq (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_relay_dlq_failed ON relay_dlq (failed_at);
 `)
 				return err
 			},

@@ -34,6 +34,91 @@ The extension provides:
 - A `Handler()` method that creates the admin API handler from your services.
 - Integration point for Forge's dependency injection and lifecycle.
 
+## Grove database integration
+
+When your Forge app uses the [Grove extension](https://github.com/xraph/grove) to manage database connections, Relay can automatically resolve a `grove.DB` from the DI container and construct the correct store backend based on the driver type.
+
+### Using the default grove database
+
+If the Grove extension registers a single database (or a default in multi-DB mode), use `WithGroveDatabase` with an empty name:
+
+```go
+ext := extension.NewExtension(
+    extension.WithGroveDatabase(""),
+)
+```
+
+### Using a named grove database
+
+In multi-database setups, reference a specific database by name:
+
+```go
+ext := extension.NewExtension(
+    extension.WithGroveDatabase("webhooks"),
+)
+```
+
+This resolves the grove.DB named `"webhooks"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+
+### Using the default grove KV store
+
+If the Grove extension registers a KV store, use `WithGroveKV` with an empty name:
+
+```go
+ext := extension.NewExtension(
+    extension.WithGroveKV(""),
+)
+```
+
+### Using a named grove KV store
+
+In multi-KV setups, reference a specific KV store by name:
+
+```go
+ext := extension.NewExtension(
+    extension.WithGroveKV("relay-kv"),
+)
+```
+
+### Store resolution order
+
+The extension resolves its store in this order:
+
+1. **Explicit store** -- if `WithStore(s)` was called, it is used directly and grove is ignored.
+2. **Grove database** -- if `WithGroveDatabase(name)` was called (or `grove_database` is set in YAML), the named or default `grove.DB` is resolved from DI.
+3. **Grove KV** -- if `WithGroveKV(name)` was called (or `grove_kv` is set in YAML), the named or default grove KV store is resolved from DI.
+4. **In-memory fallback** -- if none of the above is configured, an in-memory store is used.
+
+## YAML configuration
+
+The Relay extension automatically loads configuration from your Forge app's YAML config files. It looks for the key `extensions.relay` first, then falls back to `relay`:
+
+```yaml
+# forge.yaml (or app.yaml, config.yaml, etc.)
+extensions:
+  relay:
+    prefix: /webhooks
+    grove_database: webhooks
+    grove_kv: relay-kv
+```
+
+Or at the top level:
+
+```yaml
+relay:
+  prefix: /webhooks
+  grove_database: ""
+  grove_kv: ""
+```
+
+### Configuration reference
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Prefix` | `prefix` | `string` | `"/webhooks"` | URL prefix for all admin API routes |
+| `GroveDatabase` | `grove_database` | `string` | `""` | Name of the grove.DB to resolve from DI; empty uses the default DB |
+| `GroveKV` | `grove_kv` | `string` | `""` | Name of the grove KV store to resolve from DI; empty uses the default KV |
+
 ## Standalone usage
 
 The extension's `Handler()` method works without Forge:

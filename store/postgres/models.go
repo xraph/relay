@@ -1,4 +1,4 @@
-package bunstore
+package postgres
 
 import (
 	"encoding/json"

@@ -22,6 +22,18 @@ type Config struct {
 	// DisableMigrate disables automatic database migration on Register.
 	DisableMigrate bool `json:"disable_migrate" yaml:"disable_migrate" mapstructure:"disable_migrate"`
 
+	// GroveDatabase is the name of a grove.DB registered in the DI container.
+	// When set, the extension resolves this named database and auto-constructs
+	// the appropriate store based on the driver type (pg/sqlite/mongo).
+	// When empty and WithGroveDatabase was called, the default (unnamed) DB is used.
+	GroveDatabase string `json:"grove_database" mapstructure:"grove_database" yaml:"grove_database"`
+
+	// GroveKV is the name of a grove kv.Store registered in the DI container.
+	// When set, the extension resolves this named KV store and auto-constructs
+	// a Redis-backed store. When empty and WithGroveKV was called, the default
+	// (unnamed) kv.Store is used.
+	GroveKV string `json:"grove_kv" mapstructure:"grove_kv" yaml:"grove_kv"`
+
 	// RequireConfig requires config to be present in YAML files.
 	// If true and no config is found, Register returns an error.
 	RequireConfig bool `json:"-" yaml:"-"`

@@ -21,7 +21,7 @@ Relay is organized as a set of focused Go packages. The root `relay` package tie
 │  (catalog + endpoint + event + delivery +   │
 │   dlq interfaces composed)                  │
 ├──────────┬──────────┬───────────────────────┤
-│ Postgres │   Bun    │       Memory          │
+│ Postgres │  Grove   │       Memory          │
 │ (pgx/v5) │  (ORM)   │   (testing only)      │
 └──────────┴──────────┴───────────────────────┘
 ```
@@ -75,7 +75,7 @@ type Store interface {
 }
 ```
 
-Each subsystem defines its own store interface. A backend only needs to implement the aggregate to satisfy the contract. The memory, PostgreSQL, and Bun backends all implement this interface.
+Each subsystem defines its own store interface. A backend only needs to implement the aggregate to satisfy the contract. The memory, PostgreSQL, and Grove backends all implement this interface.
 
 ## Package index
 
@@ -95,6 +95,6 @@ Each subsystem defines its own store interface. A backend only needs to implemen
 | `store` | Composite `Store` interface |
 | `store/memory` | In-memory store for testing |
 | `store/postgres` | PostgreSQL backend with pgx/v5 |
-| `store/bunstore` | Bun ORM backend |
+| `store/grovestore` | Grove ORM backend |
 | `extension` | Forge framework integration |
 | `scope` | Multi-tenant context helpers |

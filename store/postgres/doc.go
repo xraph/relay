@@ -1,2 +1,2 @@
-// Package postgres provides a PostgreSQL Store implementation using pgx/v5.
+// Package postgres provides a PostgreSQL Store implementation using Grove ORM.
 package postgres

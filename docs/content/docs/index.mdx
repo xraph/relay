@@ -16,7 +16,7 @@ Relay is a **library** -- not a service. You bring your own HTTP server, databas
 - **Rate limiting** -- Per-endpoint token bucket limiter prevents overloading downstream services.
 - **Admin HTTP API** -- Full CRUD for event types, endpoints, events, deliveries, and DLQ replay.
 - **Observability** -- Prometheus counters, latency histograms, DLQ gauges, and OpenTelemetry tracing per delivery.
-- **Pluggable storage** -- Memory, PostgreSQL (pgx/v5), or Bun ORM. Implement `store.Store` for anything else.
+- **Pluggable storage** -- Memory, PostgreSQL (pgx/v5), or Grove ORM. Implement `store.Store` for anything else.
 
 ## Design philosophy
 

@@ -2,86 +2,167 @@ package postgres
 
 import (
 	"context"
-	"embed"
-	"fmt"
-	"sort"
-	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/xraph/grove/migrate"
 )
 
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
+// Migrations is the grove migration group for the Relay store.
+// It can be registered with the grove extension for orchestrated migration
+// management (locking, version tracking, rollback support).
+var Migrations = migrate.NewGroup("relay")
 
-// runMigrations executes all SQL migration files in order.
-func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	// Create migrations tracking table.
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS relay_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`); err != nil {
-		return fmt.Errorf("create migrations table: %w", err)
-	}
+func init() {
+	Migrations.MustRegister(
+		&migrate.Migration{
+			Name:    "create_relay_event_types",
+			Version: "20240101000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS relay_event_types (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT NOT NULL DEFAULT '',
+    group_name      TEXT NOT NULL DEFAULT '',
+    schema          JSONB,
+    schema_version  TEXT NOT NULL DEFAULT '',
+    version         TEXT NOT NULL DEFAULT '',
+    example         JSONB,
+    is_deprecated   BOOLEAN NOT NULL DEFAULT FALSE,
+    deprecated_at   TIMESTAMPTZ,
+    scope_app_id    TEXT NOT NULL DEFAULT '',
+    metadata        JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS relay_event_types`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_relay_endpoints",
+			Version: "20240101000002",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS relay_endpoints (
+    id          TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL DEFAULT '',
+    url         TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    secret      TEXT NOT NULL DEFAULT '',
+    event_types TEXT[] NOT NULL DEFAULT '{}',
+    headers     JSONB NOT NULL DEFAULT '{}',
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    rate_limit  INT NOT NULL DEFAULT 0,
+    metadata    JSONB NOT NULL DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-	// Read migration files.
-	entries, err := migrationsFS.ReadDir("migrations")
-	if err != nil {
-		return fmt.Errorf("read migrations dir: %w", err)
-	}
+CREATE INDEX IF NOT EXISTS idx_relay_endpoints_tenant ON relay_endpoints (tenant_id);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS relay_endpoints`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_relay_events",
+			Version: "20240101000003",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS relay_events (
+    id              TEXT PRIMARY KEY,
+    type            TEXT NOT NULL DEFAULT '',
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    data            JSONB,
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    scope_app_id    TEXT NOT NULL DEFAULT '',
+    scope_org_id    TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-	// Sort by filename to ensure order.
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
+CREATE INDEX IF NOT EXISTS idx_relay_events_tenant ON relay_events (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_relay_events_type ON relay_events (type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_events_idempotency ON relay_events (idempotency_key) WHERE idempotency_key != '';
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS relay_events`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_relay_deliveries",
+			Version: "20240101000004",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS relay_deliveries (
+    id              TEXT PRIMARY KEY,
+    event_id        TEXT NOT NULL DEFAULT '',
+    endpoint_id     TEXT NOT NULL DEFAULT '',
+    state           TEXT NOT NULL DEFAULT 'pending',
+    attempt_count   INT NOT NULL DEFAULT 0,
+    max_attempts    INT NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_error      TEXT NOT NULL DEFAULT '',
+    last_status_code INT NOT NULL DEFAULT 0,
+    last_response   TEXT NOT NULL DEFAULT '',
+    last_latency_ms INT NOT NULL DEFAULT 0,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_pending ON relay_deliveries (next_attempt_at) WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_event ON relay_deliveries (event_id);
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_endpoint ON relay_deliveries (endpoint_id);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS relay_deliveries`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "create_relay_dlq",
+			Version: "20240101000005",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS relay_dlq (
+    id              TEXT PRIMARY KEY,
+    delivery_id     TEXT NOT NULL DEFAULT '',
+    event_id        TEXT NOT NULL DEFAULT '',
+    endpoint_id     TEXT NOT NULL DEFAULT '',
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    event_type      TEXT NOT NULL DEFAULT '',
+    url             TEXT NOT NULL DEFAULT '',
+    payload         JSONB,
+    error           TEXT NOT NULL DEFAULT '',
+    attempt_count   INT NOT NULL DEFAULT 0,
+    last_status_code INT NOT NULL DEFAULT 0,
+    replayed_at     TIMESTAMPTZ,
+    failed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-		// Check if already applied.
-		var applied bool
-		err := pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM relay_migrations WHERE version = $1)`,
-			entry.Name(),
-		).Scan(&applied)
-		if err != nil {
-			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
-		}
-		if applied {
-			continue
-		}
-
-		// Read and execute.
-		sql, readErr := migrationsFS.ReadFile("migrations/" + entry.Name())
-		if readErr != nil {
-			return fmt.Errorf("read migration %s: %w", entry.Name(), readErr)
-		}
-
-		tx, txErr := pool.Begin(ctx)
-		if txErr != nil {
-			return fmt.Errorf("begin tx for %s: %w", entry.Name(), txErr)
-		}
-
-		if _, execErr := tx.Exec(ctx, string(sql)); execErr != nil {
-			tx.Rollback(ctx)
-			return fmt.Errorf("execute migration %s: %w", entry.Name(), execErr)
-		}
-
-		if _, execErr := tx.Exec(ctx,
-			`INSERT INTO relay_migrations (version) VALUES ($1)`,
-			entry.Name(),
-		); execErr != nil {
-			tx.Rollback(ctx)
-			return fmt.Errorf("record migration %s: %w", entry.Name(), execErr)
-		}
-
-		if commitErr := tx.Commit(ctx); commitErr != nil {
-			return fmt.Errorf("commit migration %s: %w", entry.Name(), commitErr)
-		}
-	}
-
-	return nil
+CREATE INDEX IF NOT EXISTS idx_relay_dlq_tenant ON relay_dlq (tenant_id);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS relay_dlq`)
+				return err
+			},
+		},
+	)
 }

@@ -7,7 +7,7 @@ Relay is a **library** — not a service. Import it into your Go application to 
 ## Features
 
 - **Dynamic webhook definitions** — Register event types at runtime with optional JSON Schema validation
-- **Composable store pattern** — Plug in PostgreSQL, Bun ORM, or in-memory backends. Implement the `store.Store` interface for anything else.
+- **Composable store pattern** — Plug in PostgreSQL, SQLite, Redis, MongoDB, or in-memory backends. Implement the `store.Store` interface for anything else.
 - **HMAC-SHA256 signatures** — Every delivery is signed. Receivers verify authenticity using the `signature` package.
 - **Exponential backoff retries** — Configurable schedule (default: 5s → 30s → 2m → 15m → 2h). Failed deliveries land in the dead letter queue.
 - **Per-endpoint rate limiting** — Token bucket limiter prevents overloading downstream services
@@ -84,7 +84,7 @@ All options are set via functional options on `relay.New()`:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `WithStore(s)` | *required* | Persistence backend (`memory.New()`, `postgres.New(pool)`, `bunstore.New(db)`) |
+| `WithStore(s)` | *required* | Persistence backend (`memory.New()`, `postgres.New(db)`, `sqlite.New(db)`, `redis.New(kv)`, `mongo.New(db)`) |
 | `WithLogger(l)` | `slog.Default()` | Structured logger |
 | `WithConcurrency(n)` | `10` | Delivery worker goroutines |
 | `WithPollInterval(d)` | `1s` | How often the engine checks for pending deliveries |
@@ -176,28 +176,72 @@ r, _ := relay.New(relay.WithStore(memory.New()))
 
 ```go
 import (
-    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
     "github.com/xraph/relay/store/postgres"
 )
 
-pool, _ := pgxpool.New(ctx, "postgres://localhost:5432/mydb")
-store, _ := postgres.New(pool)
+pgdb := pgdriver.New()
+pgdb.Open(ctx, "postgres://localhost:5432/mydb?sslmode=disable")
+
+db, _ := grove.Open(pgdb)
+store := postgres.New(db)
 store.Migrate(ctx)  // creates relay_* tables
 
 r, _ := relay.New(relay.WithStore(store))
 ```
 
-### Bun ORM
+### SQLite
 
 ```go
 import (
-    "github.com/uptrace/bun"
-    "github.com/xraph/relay/store/bunstore"
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+    "github.com/xraph/relay/store/sqlite"
 )
 
-db := bun.NewDB(sqlDB, dialect)
-store := bunstore.New(db)
-store.Migrate(ctx)
+sdb := sqlitedriver.New()
+sdb.Open(ctx, "relay.db")
+
+db, _ := grove.Open(sdb)
+store := sqlite.New(db)
+store.Migrate(ctx)  // creates relay_* tables
+
+r, _ := relay.New(relay.WithStore(store))
+```
+
+### Redis
+
+```go
+import (
+    "github.com/xraph/grove/kv"
+    "github.com/xraph/grove/kv/drivers/redisdriver"
+    redisstore "github.com/xraph/relay/store/redis"
+)
+
+rdb := redisdriver.New("redis://localhost:6379")
+kvStore, _ := kv.New(rdb)
+
+store := redisstore.New(kvStore)
+
+r, _ := relay.New(relay.WithStore(store))
+```
+
+### MongoDB
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/mongodriver"
+    "github.com/xraph/relay/store/mongo"
+)
+
+mdb := mongodriver.New()
+mdb.Open(ctx, "mongodb://localhost:27017/relay")
+
+db, _ := grove.Open(mdb)
+store := mongo.New(db)
+store.Migrate(ctx)  // creates indexes
 
 r, _ := relay.New(relay.WithStore(store))
 ```
@@ -219,8 +263,10 @@ r, _ := relay.New(relay.WithStore(store))
 | `api` | HTTP admin API handlers (Go 1.22+ ServeMux) |
 | `store` | Composite `Store` interface (catalog + endpoint + event + delivery + dlq) |
 | `store/memory` | In-memory store for testing |
-| `store/postgres` | PostgreSQL backend with pgx/v5 and embedded migrations |
-| `store/bunstore` | Bun ORM backend (PostgreSQL, SQLite, MySQL) |
+| `store/postgres` | PostgreSQL backend using Grove ORM |
+| `store/sqlite` | SQLite backend for embedded/edge deployments |
+| `store/redis` | Redis backend using Grove KV |
+| `store/mongo` | MongoDB backend |
 | `extension` | Forge framework extension integration |
 | `scope` | Multi-tenant context helpers |
 
@@ -239,10 +285,10 @@ r, _ := relay.New(relay.WithStore(store))
 │              store.Store                     │
 │  (catalog + endpoint + event + delivery +   │
 │   dlq interfaces composed)                  │
-├──────────┬──────────┬───────────────────────┤
-│ Postgres │   Bun    │       Memory          │
-│ (pgx/v5) │  (ORM)   │   (testing only)      │
-└──────────┴──────────┴───────────────────────┘
+├────────┬────────┬───────┬───────┬─────────────┤
+│Postgres│ SQLite │ Redis │ Mongo │   Memory    │
+│ (Grove)│(Grove) │(KV)   │(Grove)│(testing)    │
+└────────┴────────┴───────┴───────┴─────────────┘
 ```
 
 ## Examples

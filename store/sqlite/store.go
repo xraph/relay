@@ -1,4 +1,4 @@
-package bunstore
+package sqlite
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/xraph/grove"
-	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/sqlitedriver"
 	"github.com/xraph/grove/migrate"
 
 	relay "github.com/xraph/relay"
@@ -18,23 +18,24 @@ import (
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/internal/entity"
 	relaystore "github.com/xraph/relay/store"
 )
 
 // compile-time interface check
 var _ relaystore.Store = (*Store)(nil)
 
-// Store implements store.Store using grove ORM with pgdriver.
+// Store implements store.Store using SQLite via Grove ORM.
 type Store struct {
-	db *grove.DB
-	pg *pgdriver.PgDB
+	db  *grove.DB
+	sdb *sqlitedriver.SqliteDB
 }
 
-// New creates a new grove-backed store.
+// New creates a new SQLite store backed by Grove ORM.
 func New(db *grove.DB) *Store {
 	return &Store{
-		db: db,
-		pg: pgdriver.Unwrap(db),
+		db:  db,
+		sdb: sqlitedriver.Unwrap(db),
 	}
 }
 
@@ -43,13 +44,13 @@ func (s *Store) DB() *grove.DB { return s.db }
 
 // Migrate creates the required tables and indexes using the grove orchestrator.
 func (s *Store) Migrate(ctx context.Context) error {
-	executor, err := migrate.NewExecutorFor(s.pg)
+	executor, err := migrate.NewExecutorFor(s.sdb)
 	if err != nil {
-		return fmt.Errorf("relay/bunstore: create migration executor: %w", err)
+		return fmt.Errorf("relay/sqlite: create migration executor: %w", err)
 	}
 	orch := migrate.NewOrchestrator(executor, Migrations)
 	if _, err := orch.Migrate(ctx); err != nil {
-		return fmt.Errorf("relay/bunstore: migration failed: %w", err)
+		return fmt.Errorf("relay/sqlite: migration failed: %w", err)
 	}
 	return nil
 }
@@ -68,7 +69,7 @@ func (s *Store) Close() error {
 
 func (s *Store) RegisterType(ctx context.Context, et *catalog.EventType) error {
 	m := toEventTypeModel(et)
-	_, err := s.pg.NewInsert(m).
+	_, err := s.sdb.NewInsert(m).
 		OnConflict("(name) DO UPDATE").
 		Set("description = EXCLUDED.description").
 		Set("group_name = EXCLUDED.group_name").
@@ -78,7 +79,7 @@ func (s *Store) RegisterType(ctx context.Context, et *catalog.EventType) error {
 		Set("example = EXCLUDED.example").
 		Set("scope_app_id = EXCLUDED.scope_app_id").
 		Set("metadata = EXCLUDED.metadata").
-		Set("is_deprecated = false").
+		Set("is_deprecated = 0").
 		Set("deprecated_at = NULL").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
@@ -87,8 +88,8 @@ func (s *Store) RegisterType(ctx context.Context, et *catalog.EventType) error {
 
 func (s *Store) GetType(ctx context.Context, name string) (*catalog.EventType, error) {
 	m := new(eventTypeModel)
-	err := s.pg.NewSelect(m).
-		Where("name = $1", name).
+	err := s.sdb.NewSelect(m).
+		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -101,8 +102,8 @@ func (s *Store) GetType(ctx context.Context, name string) (*catalog.EventType, e
 
 func (s *Store) GetTypeByID(ctx context.Context, etID id.ID) (*catalog.EventType, error) {
 	m := new(eventTypeModel)
-	err := s.pg.NewSelect(m).
-		Where("id = $1", etID.String()).
+	err := s.sdb.NewSelect(m).
+		Where("id = ?", etID.String()).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -115,15 +116,13 @@ func (s *Store) GetTypeByID(ctx context.Context, etID id.ID) (*catalog.EventType
 
 func (s *Store) ListTypes(ctx context.Context, opts catalog.ListOpts) ([]*catalog.EventType, error) {
 	var models []eventTypeModel
-	q := s.pg.NewSelect(&models)
+	q := s.sdb.NewSelect(&models)
 
-	argIdx := 0
 	if opts.Group != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("group_name = $%d", argIdx), opts.Group)
+		q = q.Where("group_name = ?", opts.Group)
 	}
 	if !opts.IncludeDeprecated {
-		q = q.Where("is_deprecated = false")
+		q = q.Where("is_deprecated = 0")
 	}
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
@@ -149,13 +148,13 @@ func (s *Store) ListTypes(ctx context.Context, opts catalog.ListOpts) ([]*catalo
 }
 
 func (s *Store) DeleteType(ctx context.Context, name string) error {
-	now := time.Now().UTC()
-	res, err := s.pg.NewUpdate((*eventTypeModel)(nil)).
-		Set("is_deprecated = true").
-		Set("deprecated_at = $1", now).
-		Set("updated_at = $2", now).
-		Where("name = $3", name).
-		Where("is_deprecated = false").
+	t := now()
+	res, err := s.sdb.NewUpdate((*eventTypeModel)(nil)).
+		Set("is_deprecated = ?", true).
+		Set("deprecated_at = ?", t).
+		Set("updated_at = ?", t).
+		Where("name = ?", name).
+		Where("is_deprecated = 0").
 		Exec(ctx)
 	if err != nil {
 		return err
@@ -172,8 +171,8 @@ func (s *Store) DeleteType(ctx context.Context, name string) error {
 
 func (s *Store) MatchTypes(ctx context.Context, pattern string) ([]*catalog.EventType, error) {
 	var models []eventTypeModel
-	if err := s.pg.NewSelect(&models).
-		Where("is_deprecated = false").
+	if err := s.sdb.NewSelect(&models).
+		Where("is_deprecated = 0").
 		Scan(ctx); err != nil {
 		return nil, err
 	}
@@ -195,14 +194,14 @@ func (s *Store) MatchTypes(ctx context.Context, pattern string) ([]*catalog.Even
 
 func (s *Store) CreateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error {
 	m := toEndpointModel(ep)
-	_, err := s.pg.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	return err
 }
 
 func (s *Store) GetEndpoint(ctx context.Context, epID id.ID) (*endpoint.Endpoint, error) {
 	m := new(endpointModel)
-	err := s.pg.NewSelect(m).
-		Where("id = $1", epID.String()).
+	err := s.sdb.NewSelect(m).
+		Where("id = ?", epID.String()).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -215,8 +214,8 @@ func (s *Store) GetEndpoint(ctx context.Context, epID id.ID) (*endpoint.Endpoint
 
 func (s *Store) UpdateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error {
 	m := toEndpointModel(ep)
-	m.UpdatedAt = time.Now().UTC()
-	res, err := s.pg.NewUpdate(m).
+	m.UpdatedAt = now()
+	res, err := s.sdb.NewUpdate(m).
 		WherePK().
 		Exec(ctx)
 	if err != nil {
@@ -233,8 +232,8 @@ func (s *Store) UpdateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error
 }
 
 func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
-	res, err := s.pg.NewDelete((*endpointModel)(nil)).
-		Where("id = $1", epID.String()).
+	res, err := s.sdb.NewDelete((*endpointModel)(nil)).
+		Where("id = ?", epID.String()).
 		Exec(ctx)
 	if err != nil {
 		return err
@@ -251,7 +250,7 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 
 func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoint.ListOpts) ([]*endpoint.Endpoint, error) {
 	var models []endpointModel
-	q := s.pg.NewSelect(&models).Where("tenant_id = $1", tenantID)
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenantID)
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
 	}
@@ -277,16 +276,16 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 
 func (s *Store) Resolve(ctx context.Context, tenantID, eventType string) ([]*endpoint.Endpoint, error) {
 	var models []endpointModel
-	if err := s.pg.NewSelect(&models).
-		Where("tenant_id = $1", tenantID).
-		Where("enabled = true").
+	if err := s.sdb.NewSelect(&models).
+		Where("tenant_id = ?", tenantID).
+		Where("enabled = 1").
 		Scan(ctx); err != nil {
 		return nil, err
 	}
 
 	var result []*endpoint.Endpoint
 	for i := range models {
-		for _, pattern := range models[i].EventTypes {
+		for _, pattern := range models[i].eventTypes() {
 			if catalog.Match(pattern, eventType) {
 				ep, err := fromEndpointModel(&models[i])
 				if err != nil {
@@ -301,11 +300,11 @@ func (s *Store) Resolve(ctx context.Context, tenantID, eventType string) ([]*end
 }
 
 func (s *Store) SetEnabled(ctx context.Context, epID id.ID, enabled bool) error {
-	now := time.Now().UTC()
-	res, err := s.pg.NewUpdate((*endpointModel)(nil)).
-		Set("enabled = $1", enabled).
-		Set("updated_at = $2", now).
-		Where("id = $3", epID.String()).
+	t := now()
+	res, err := s.sdb.NewUpdate((*endpointModel)(nil)).
+		Set("enabled = ?", enabled).
+		Set("updated_at = ?", t).
+		Where("id = ?", epID.String()).
 		Exec(ctx)
 	if err != nil {
 		return err
@@ -326,8 +325,7 @@ func (s *Store) CreateEvent(ctx context.Context, evt *event.Event) error {
 	m := toEventModel(evt)
 
 	if evt.IdempotencyKey != "" {
-		// Use ON CONFLICT DO NOTHING for idempotency.
-		res, err := s.pg.NewInsert(m).
+		res, err := s.sdb.NewInsert(m).
 			OnConflict("(idempotency_key) WHERE idempotency_key != '' DO NOTHING").
 			Exec(ctx)
 		if err != nil {
@@ -343,14 +341,14 @@ func (s *Store) CreateEvent(ctx context.Context, evt *event.Event) error {
 		return nil
 	}
 
-	_, err := s.pg.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	return err
 }
 
 func (s *Store) GetEvent(ctx context.Context, evtID id.ID) (*event.Event, error) {
 	m := new(eventModel)
-	err := s.pg.NewSelect(m).
-		Where("id = $1", evtID.String()).
+	err := s.sdb.NewSelect(m).
+		Where("id = ?", evtID.String()).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -363,20 +361,16 @@ func (s *Store) GetEvent(ctx context.Context, evtID id.ID) (*event.Event, error)
 
 func (s *Store) ListEvents(ctx context.Context, opts event.ListOpts) ([]*event.Event, error) {
 	var models []eventModel
-	q := s.pg.NewSelect(&models)
+	q := s.sdb.NewSelect(&models)
 
-	argIdx := 0
 	if opts.Type != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("type = $%d", argIdx), opts.Type)
+		q = q.Where("type = ?", opts.Type)
 	}
 	if opts.From != nil {
-		argIdx++
-		q = q.Where(fmt.Sprintf("created_at >= $%d", argIdx), *opts.From)
+		q = q.Where("created_at >= ?", *opts.From)
 	}
 	if opts.To != nil {
-		argIdx++
-		q = q.Where(fmt.Sprintf("created_at <= $%d", argIdx), *opts.To)
+		q = q.Where("created_at <= ?", *opts.To)
 	}
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
@@ -403,12 +397,10 @@ func (s *Store) ListEvents(ctx context.Context, opts event.ListOpts) ([]*event.E
 
 func (s *Store) ListEventsByTenant(ctx context.Context, tenantID string, opts event.ListOpts) ([]*event.Event, error) {
 	var models []eventModel
-	q := s.pg.NewSelect(&models).Where("tenant_id = $1", tenantID)
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenantID)
 
-	argIdx := 1
 	if opts.Type != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("type = $%d", argIdx), opts.Type)
+		q = q.Where("type = ?", opts.Type)
 	}
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
@@ -437,7 +429,7 @@ func (s *Store) ListEventsByTenant(ctx context.Context, tenantID string, opts ev
 
 func (s *Store) Enqueue(ctx context.Context, d *delivery.Delivery) error {
 	m := toDeliveryModel(d)
-	_, err := s.pg.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	return err
 }
 
@@ -449,22 +441,21 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 	for i, d := range ds {
 		models[i] = *toDeliveryModel(d)
 	}
-	_, err := s.pg.NewInsert(&models).Exec(ctx)
+	_, err := s.sdb.NewInsert(&models).Exec(ctx)
 	return err
 }
 
 func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, error) {
-	// Use raw SQL for the FOR UPDATE SKIP LOCKED dequeue pattern.
+	// SQLite serializes writes (WAL mode), so no FOR UPDATE SKIP LOCKED needed.
 	var models []deliveryModel
-	err := s.pg.NewRaw(`
+	err := s.sdb.NewRaw(`
 		UPDATE relay_deliveries
-		SET state = 'delivering', updated_at = NOW()
+		SET state = 'delivering', updated_at = datetime('now')
 		WHERE id IN (
 			SELECT id FROM relay_deliveries
-			WHERE state = 'pending' AND next_attempt_at <= NOW()
+			WHERE state = 'pending' AND next_attempt_at <= datetime('now')
 			ORDER BY next_attempt_at ASC
-			LIMIT $1
-			FOR UPDATE SKIP LOCKED
+			LIMIT ?
 		)
 		RETURNING *
 	`, limit).Scan(ctx, &models)
@@ -485,15 +476,15 @@ func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, e
 
 func (s *Store) UpdateDelivery(ctx context.Context, d *delivery.Delivery) error {
 	m := toDeliveryModel(d)
-	m.UpdatedAt = time.Now().UTC()
-	_, err := s.pg.NewUpdate(m).WherePK().Exec(ctx)
+	m.UpdatedAt = now()
+	_, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	return err
 }
 
 func (s *Store) GetDelivery(ctx context.Context, delID id.ID) (*delivery.Delivery, error) {
 	m := new(deliveryModel)
-	err := s.pg.NewSelect(m).
-		Where("id = $1", delID.String()).
+	err := s.sdb.NewSelect(m).
+		Where("id = ?", delID.String()).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -506,10 +497,10 @@ func (s *Store) GetDelivery(ctx context.Context, delID id.ID) (*delivery.Deliver
 
 func (s *Store) ListByEndpoint(ctx context.Context, epID id.ID, opts delivery.ListOpts) ([]*delivery.Delivery, error) {
 	var models []deliveryModel
-	q := s.pg.NewSelect(&models).Where("endpoint_id = $1", epID.String())
+	q := s.sdb.NewSelect(&models).Where("endpoint_id = ?", epID.String())
 
 	if opts.State != nil {
-		q = q.Where("state = $2", string(*opts.State))
+		q = q.Where("state = ?", string(*opts.State))
 	}
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
@@ -536,8 +527,8 @@ func (s *Store) ListByEndpoint(ctx context.Context, epID id.ID, opts delivery.Li
 
 func (s *Store) ListByEvent(ctx context.Context, evtID id.ID) ([]*delivery.Delivery, error) {
 	var models []deliveryModel
-	if err := s.pg.NewSelect(&models).
-		Where("event_id = $1", evtID.String()).
+	if err := s.sdb.NewSelect(&models).
+		Where("event_id = ?", evtID.String()).
 		OrderExpr("created_at DESC").
 		Scan(ctx); err != nil {
 		return nil, err
@@ -555,8 +546,8 @@ func (s *Store) ListByEvent(ctx context.Context, evtID id.ID) ([]*delivery.Deliv
 }
 
 func (s *Store) CountPending(ctx context.Context) (int64, error) {
-	count, err := s.pg.NewSelect((*deliveryModel)(nil)).
-		Where("state = $1", string(delivery.StatePending)).
+	count, err := s.sdb.NewSelect((*deliveryModel)(nil)).
+		Where("state = ?", string(delivery.StatePending)).
 		Count(ctx)
 	return count, err
 }
@@ -565,30 +556,25 @@ func (s *Store) CountPending(ctx context.Context) (int64, error) {
 
 func (s *Store) Push(ctx context.Context, entry *dlq.Entry) error {
 	m := toDLQEntryModel(entry)
-	_, err := s.pg.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	return err
 }
 
 func (s *Store) ListDLQ(ctx context.Context, opts dlq.ListOpts) ([]*dlq.Entry, error) {
 	var models []dlqEntryModel
-	q := s.pg.NewSelect(&models)
+	q := s.sdb.NewSelect(&models)
 
-	argIdx := 0
 	if opts.TenantID != "" {
-		argIdx++
-		q = q.Where(fmt.Sprintf("tenant_id = $%d", argIdx), opts.TenantID)
+		q = q.Where("tenant_id = ?", opts.TenantID)
 	}
 	if opts.EndpointID != nil {
-		argIdx++
-		q = q.Where(fmt.Sprintf("endpoint_id = $%d", argIdx), opts.EndpointID.String())
+		q = q.Where("endpoint_id = ?", opts.EndpointID.String())
 	}
 	if opts.From != nil {
-		argIdx++
-		q = q.Where(fmt.Sprintf("failed_at >= $%d", argIdx), *opts.From)
+		q = q.Where("failed_at >= ?", *opts.From)
 	}
 	if opts.To != nil {
-		argIdx++
-		q = q.Where(fmt.Sprintf("failed_at <= $%d", argIdx), *opts.To)
+		q = q.Where("failed_at <= ?", *opts.To)
 	}
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
@@ -615,8 +601,8 @@ func (s *Store) ListDLQ(ctx context.Context, opts dlq.ListOpts) ([]*dlq.Entry, e
 
 func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	m := new(dlqEntryModel)
-	err := s.pg.NewSelect(m).
-		Where("id = $1", dlqID.String()).
+	err := s.sdb.NewSelect(m).
+		Where("id = ?", dlqID.String()).
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
@@ -628,39 +614,35 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 }
 
 func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
-	// Get the DLQ entry.
 	entry, err := s.GetDLQ(ctx, dlqID)
 	if err != nil {
 		return err
 	}
 
-	// Re-enqueue a new delivery.
 	d := &delivery.Delivery{
+		Entity:        entity.New(),
 		ID:            id.NewDeliveryID(),
 		EventID:       entry.EventID,
 		EndpointID:    entry.EndpointID,
 		State:         delivery.StatePending,
-		NextAttemptAt: time.Now().UTC(),
+		NextAttemptAt: now(),
 	}
-	d.CreatedAt = time.Now().UTC()
-	d.UpdatedAt = d.CreatedAt
 
 	if enqueueErr := s.Enqueue(ctx, d); enqueueErr != nil {
 		return enqueueErr
 	}
 
-	// Remove from DLQ.
-	_, err = s.pg.NewDelete((*dlqEntryModel)(nil)).
-		Where("id = $1", dlqID.String()).
+	_, err = s.sdb.NewDelete((*dlqEntryModel)(nil)).
+		Where("id = ?", dlqID.String()).
 		Exec(ctx)
 	return err
 }
 
 func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
 	var models []dlqEntryModel
-	if err := s.pg.NewSelect(&models).
-		Where("failed_at >= $1", from).
-		Where("failed_at <= $2", to).
+	if err := s.sdb.NewSelect(&models).
+		Where("failed_at >= ?", from).
+		Where("failed_at <= ?", to).
 		Scan(ctx); err != nil {
 		return 0, err
 	}
@@ -672,37 +654,36 @@ func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, erro
 			return count, err
 		}
 		d := &delivery.Delivery{
+			Entity:        entity.New(),
 			ID:            id.NewDeliveryID(),
 			EventID:       entry.EventID,
 			EndpointID:    entry.EndpointID,
 			State:         delivery.StatePending,
-			NextAttemptAt: time.Now().UTC(),
+			NextAttemptAt: now(),
 		}
-		d.CreatedAt = time.Now().UTC()
-		d.UpdatedAt = d.CreatedAt
 
 		if err := s.Enqueue(ctx, d); err != nil {
 			return count, err
 		}
 
-		if _, err := s.pg.NewDelete((*dlqEntryModel)(nil)).
-			Where("id = $1", models[i].ID).
+		if _, err := s.sdb.NewDelete((*dlqEntryModel)(nil)).
+			Where("id = ?", models[i].ID).
 			Exec(ctx); err != nil {
 			return count, err
 		}
 		count++
 	}
-
 	return count, nil
 }
 
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.pg.NewDelete((*dlqEntryModel)(nil)).
-		Where("failed_at < $1", before).
+	res, err := s.sdb.NewDelete((*dlqEntryModel)(nil)).
+		Where("failed_at < ?", before).
 		Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
+
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return 0, err
@@ -711,9 +692,14 @@ func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
 }
 
 func (s *Store) CountDLQ(ctx context.Context) (int64, error) {
-	count, err := s.pg.NewSelect((*dlqEntryModel)(nil)).
+	count, err := s.sdb.NewSelect((*dlqEntryModel)(nil)).
 		Count(ctx)
 	return count, err
+}
+
+// now returns the current UTC time.
+func now() time.Time {
+	return time.Now().UTC()
 }
 
 // isNoRows checks for the standard sql.ErrNoRows sentinel.

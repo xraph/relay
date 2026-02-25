@@ -1,16 +1,16 @@
 ---
-title: Bun Store
-description: SQL store using the Bun ORM.
+title: Grove Store
+description: SQL store using grove ORM.
 ---
 
-The Bun store uses the [Bun](https://bun.uptrace.dev/) ORM for database access. It provides struct-based models and supports PostgreSQL.
+The Grove store uses the [Grove](https://github.com/xraph/forgery/grove) ORM for database access. It provides struct-based models and supports PostgreSQL.
 
 ## Usage
 
 ```go
-import "github.com/xraph/relay/store/bunstore"
+import "github.com/xraph/relay/store/grovestore"
 
-s, err := bunstore.New(bunstore.Config{
+s, err := grovestore.New(grovestore.Config{
     DSN: "postgres://user:pass@localhost:5432/relay?sslmode=disable",
 })
 if err != nil {
@@ -28,8 +28,8 @@ r, err := relay.New(relay.WithStore(s))
 
 | Aspect | Detail |
 |--------|--------|
-| ORM | Bun v1 with struct-based models |
-| Migrations | Bun migrator with Go-defined migrations |
+| ORM | Grove ORM with struct-based models |
+| Migrations | Grove migrator with Go-defined migrations |
 | Transactions | Database-level ACID |
 | Ping | `db.PingContext(ctx)` |
 | Close | Closes the connection pool |
@@ -37,4 +37,4 @@ r, err := relay.New(relay.WithStore(s))
 ## When to use
 
 - When you prefer an ORM over raw SQL.
-- Teams familiar with Bun.
+- Teams using grove in their Forge stack.

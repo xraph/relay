@@ -3,9 +3,12 @@ package extension
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/xraph/forge"
+	"github.com/xraph/grove"
+	"github.com/xraph/grove/kv"
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/relay"
@@ -15,6 +18,10 @@ import (
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/observability"
 	"github.com/xraph/relay/store"
+	mongostore "github.com/xraph/relay/store/mongo"
+	pgstore "github.com/xraph/relay/store/postgres"
+	redisstore "github.com/xraph/relay/store/redis"
+	sqlitestore "github.com/xraph/relay/store/sqlite"
 )
 
 // ExtensionName is the name registered with Forge.
@@ -35,10 +42,12 @@ var _ forge.Extension = (*Extension)(nil)
 type Extension struct {
 	*forge.BaseExtension
 
-	config Config
-	r      *relay.Relay
-	api    *api.ForgeAPI
-	opts   []relay.Option
+	config     Config
+	r          *relay.Relay
+	api        *api.ForgeAPI
+	opts       []relay.Option
+	useGrove   bool
+	useGroveKV bool
 }
 
 // New creates a Relay Forge extension with the given options.
@@ -87,6 +96,25 @@ func (e *Extension) Register(fapp forge.App) error {
 // Init initializes the extension. In a Forge environment, this is called
 // during Register. For standalone use, call it manually.
 func (e *Extension) Init(fapp forge.App) error {
+	// Resolve grove database store if configured (takes precedence over grove KV).
+	if e.useGrove {
+		groveDB, err := e.resolveGroveDB(fapp)
+		if err != nil {
+			return fmt.Errorf("relay: %w", err)
+		}
+		s, err := e.buildStoreFromGroveDB(groveDB)
+		if err != nil {
+			return err
+		}
+		e.opts = append(e.opts, relay.WithStore(s))
+	} else if e.useGroveKV {
+		kvStore, err := e.resolveGroveKV(fapp)
+		if err != nil {
+			return fmt.Errorf("relay: %w", err)
+		}
+		e.opts = append(e.opts, relay.WithStore(redisstore.New(kvStore)))
+	}
+
 	// Build relay options from extension config + user options.
 	relayOpts := make([]relay.Option, 0, len(e.opts)+6)
 	relayOpts = append(relayOpts, e.opts...)
@@ -173,6 +201,7 @@ func (e *Extension) BasePath() string {
 }
 
 // Prefix returns the configured URL prefix.
+//
 // Deprecated: Use BasePath instead.
 func (e *Extension) Prefix() string {
 	return e.BasePath()
@@ -200,10 +229,20 @@ func (e *Extension) loadConfiguration() error {
 		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
 	}
 
+	// Enable grove resolution if YAML config specifies grove settings.
+	if e.config.GroveDatabase != "" {
+		e.useGrove = true
+	}
+	if e.config.GroveKV != "" {
+		e.useGroveKV = true
+	}
+
 	e.Logger().Debug("relay: configuration loaded",
 		forge.F("disable_routes", e.config.DisableRoutes),
 		forge.F("disable_migrate", e.config.DisableMigrate),
 		forge.F("base_path", e.config.BasePath),
+		forge.F("grove_database", e.config.GroveDatabase),
+		forge.F("grove_kv", e.config.GroveKV),
 	)
 
 	return nil
@@ -291,6 +330,12 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	if yamlConfig.BasePath == "" && programmaticConfig.BasePath != "" {
 		yamlConfig.BasePath = programmaticConfig.BasePath
 	}
+	if yamlConfig.GroveDatabase == "" && programmaticConfig.GroveDatabase != "" {
+		yamlConfig.GroveDatabase = programmaticConfig.GroveDatabase
+	}
+	if yamlConfig.GroveKV == "" && programmaticConfig.GroveKV != "" {
+		yamlConfig.GroveKV = programmaticConfig.GroveKV
+	}
 
 	// Duration/int fields: YAML takes precedence, programmatic fills gaps.
 	if yamlConfig.Concurrency == 0 && programmaticConfig.Concurrency != 0 {
@@ -320,4 +365,54 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 
 	// Fill remaining zeros with defaults.
 	return e.mergeWithDefaults(yamlConfig)
+}
+
+// resolveGroveDB resolves a *grove.DB from the DI container.
+// If GroveDatabase is set, it looks up the named DB; otherwise it uses the default.
+func (e *Extension) resolveGroveDB(fapp forge.App) (*grove.DB, error) {
+	if e.config.GroveDatabase != "" {
+		db, err := vessel.InjectNamed[*grove.DB](fapp.Container(), e.config.GroveDatabase)
+		if err != nil {
+			return nil, fmt.Errorf("grove database %q not found in container: %w", e.config.GroveDatabase, err)
+		}
+		return db, nil
+	}
+	db, err := vessel.Inject[*grove.DB](fapp.Container())
+	if err != nil {
+		return nil, fmt.Errorf("default grove database not found in container: %w", err)
+	}
+	return db, nil
+}
+
+// buildStoreFromGroveDB constructs the appropriate store backend
+// based on the grove driver type (pg, sqlite, mongo).
+func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
+	driverName := db.Driver().Name()
+	switch driverName {
+	case "pg":
+		return pgstore.New(db), nil
+	case "sqlite":
+		return sqlitestore.New(db), nil
+	case "mongo":
+		return mongostore.New(db), nil
+	default:
+		return nil, fmt.Errorf("relay: unsupported grove driver %q", driverName)
+	}
+}
+
+// resolveGroveKV resolves a *kv.Store from the DI container.
+// If GroveKV is set, it looks up the named store; otherwise it uses the default.
+func (e *Extension) resolveGroveKV(fapp forge.App) (*kv.Store, error) {
+	if e.config.GroveKV != "" {
+		s, err := vessel.InjectNamed[*kv.Store](fapp.Container(), e.config.GroveKV)
+		if err != nil {
+			return nil, fmt.Errorf("grove kv store %q not found in container: %w", e.config.GroveKV, err)
+		}
+		return s, nil
+	}
+	s, err := vessel.Inject[*kv.Store](fapp.Container())
+	if err != nil {
+		return nil, fmt.Errorf("default grove kv store not found in container: %w", err)
+	}
+	return s, nil
 }
