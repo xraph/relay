@@ -2,8 +2,6 @@ package dashboard
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/xraph/relay"
 	"github.com/xraph/relay/catalog"
@@ -75,38 +73,4 @@ func fetchDeliveriesByEvent(ctx context.Context, r *relay.Relay, evtID id.ID) ([
 // fetchDLQEntries returns DLQ entries with the given options.
 func fetchDLQEntries(ctx context.Context, r *relay.Relay, opts dlq.ListOpts) ([]*dlq.Entry, error) {
 	return r.Store().ListDLQ(ctx, opts)
-}
-
-// formatTimeAgo returns a human-readable relative time string.
-func formatTimeAgo(t time.Time) string {
-	d := time.Since(t)
-	if d < 0 {
-		d = -d
-	}
-
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	case d < 365*24*time.Hour:
-		return fmt.Sprintf("%dmo ago", int(d.Hours()/(24*30)))
-	default:
-		return fmt.Sprintf("%dy ago", int(d.Hours()/(24*365)))
-	}
-}
-
-// truncateString shortens s to max characters, appending "..." if truncated.
-func truncateString(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return s[:max-3] + "..."
 }

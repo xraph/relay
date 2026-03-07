@@ -118,7 +118,10 @@ func (c *Contributor) renderOverview(ctx context.Context) (templ.Component, erro
 	}
 
 	// Recent events
-	recentEvents, _ := fetchEvents(ctx, c.r, event.ListOpts{Limit: 10})
+	recentEvents, err := fetchEvents(ctx, c.r, event.ListOpts{Limit: 10})
+	if err != nil {
+		recentEvents = nil
+	}
 
 	// Recent deliveries - we get them from the first endpoint or empty
 	var recentDeliveries []*delivery.Delivery
@@ -197,7 +200,10 @@ func (c *Contributor) renderEndpoints(ctx context.Context, params contributor.Pa
 
 func (c *Contributor) renderEndpointCreate(ctx context.Context, params contributor.Params) (templ.Component, error) {
 	// Fetch event types for auto-suggestion dropdown.
-	eventTypes, _ := fetchEventTypes(ctx, c.r, catalog.ListOpts{Limit: 200})
+	eventTypes, err := fetchEventTypes(ctx, c.r, catalog.ListOpts{Limit: 200})
+	if err != nil {
+		eventTypes = nil
+	}
 
 	// Handle form POST submission.
 	if params.FormData["action"] == "create_endpoint" {
@@ -286,16 +292,16 @@ func (c *Contributor) renderEndpointDetail(ctx context.Context, params contribut
 	if action := params.QueryParams["action"]; action != "" {
 		switch action {
 		case "enable":
-			if err := c.r.Endpoints().SetEnabled(ctx, epID, true); err != nil {
-				return nil, fmt.Errorf("dashboard: enable endpoint: %w", err)
+			if setErr := c.r.Endpoints().SetEnabled(ctx, epID, true); setErr != nil {
+				return nil, fmt.Errorf("dashboard: enable endpoint: %w", setErr)
 			}
 		case "disable":
-			if err := c.r.Endpoints().SetEnabled(ctx, epID, false); err != nil {
-				return nil, fmt.Errorf("dashboard: disable endpoint: %w", err)
+			if setErr := c.r.Endpoints().SetEnabled(ctx, epID, false); setErr != nil {
+				return nil, fmt.Errorf("dashboard: disable endpoint: %w", setErr)
 			}
 		case "rotate_secret":
-			if _, err := c.r.Endpoints().RotateSecret(ctx, epID); err != nil {
-				return nil, fmt.Errorf("dashboard: rotate secret: %w", err)
+			if _, rotErr := c.r.Endpoints().RotateSecret(ctx, epID); rotErr != nil {
+				return nil, fmt.Errorf("dashboard: rotate secret: %w", rotErr)
 			}
 		}
 	}
@@ -305,7 +311,10 @@ func (c *Contributor) renderEndpointDetail(ctx context.Context, params contribut
 		return nil, fmt.Errorf("dashboard: resolve endpoint: %w", err)
 	}
 
-	deliveries, _ := fetchDeliveriesByEndpoint(ctx, c.r, epID, delivery.ListOpts{Limit: 20})
+	deliveries, err := fetchDeliveriesByEndpoint(ctx, c.r, epID, delivery.ListOpts{Limit: 20})
+	if err != nil {
+		deliveries = nil
+	}
 
 	return pages.EndpointDetailPage(pages.EndpointDetailData{
 		Endpoint:   ep,
@@ -417,7 +426,9 @@ func (c *Contributor) renderDLQ(ctx context.Context, params contributor.Params) 
 	if params.QueryParams["action"] == "replay_all" {
 		now := time.Now()
 		past := now.Add(-365 * 24 * time.Hour)
-		_, _ = c.r.DLQ().ReplayBulk(ctx, past, now)
+		if _, err := c.r.DLQ().ReplayBulk(ctx, past, now); err != nil {
+			return nil, fmt.Errorf("dashboard: replay bulk: %w", err)
+		}
 	}
 
 	entries, err := fetchDLQEntries(ctx, c.r, dlq.ListOpts{Limit: 50})
