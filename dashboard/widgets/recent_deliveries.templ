@@ -1,0 +1,15 @@
+package widgets
+
+import (
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/relay/delivery"
+)
+
+// RecentDeliveriesWidget renders a table of recent deliveries.
+templ RecentDeliveriesWidget(deliveries []*delivery.Delivery) {
+	if len(deliveries) == 0 {
+		@components.EmptyState("send", "No recent deliveries", "")
+	} else {
+		@components.DeliveryTable(deliveries, "./")
+	}
+}

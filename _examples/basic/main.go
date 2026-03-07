@@ -12,11 +12,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	relay "github.com/xraph/relay"
 	"github.com/xraph/relay/catalog"
@@ -27,7 +28,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	logger := slog.Default()
+	logger := log.NewNoopLogger()
 
 	// 1. Create a mock webhook receiver.
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +45,8 @@ func main() {
 		relay.WithLogger(logger),
 	)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
 	}
 
 	// 3. Register an event type.
@@ -54,7 +56,8 @@ func main() {
 		Version:     "2025-01-01",
 	})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
 	}
 	fmt.Println("Registered event type: order.created")
 
@@ -65,7 +68,8 @@ func main() {
 		EventTypes: []string{"order.*"},
 	})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
 	}
 	fmt.Println("Created endpoint:", ep.ID, "->", ep.URL)
 
@@ -76,7 +80,8 @@ func main() {
 		Data:     json.RawMessage(`{"order_id":"ORD-001","amount":99.99}`),
 	})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
 	}
 	fmt.Println("Event sent!")
 

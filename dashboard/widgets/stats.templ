@@ -1,0 +1,25 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/relay/dashboard/components"
+)
+
+// StatsData holds counts for the stats widget.
+type StatsData struct {
+	EventTypes int
+	Endpoints  int
+	Pending    int64
+	DLQSize    int64
+}
+
+// StatsWidget renders a 4-card stats overview widget.
+templ StatsWidget(data StatsData) {
+	<div class="grid grid-cols-2 gap-4">
+		@components.StatCard("list-tree", "Event Types", strconv.Itoa(data.EventTypes), "")
+		@components.StatCard("webhook", "Endpoints", strconv.Itoa(data.Endpoints), "")
+		@components.StatCard("loader", "Pending", strconv.FormatInt(data.Pending, 10), "")
+		@components.StatCard("alert-triangle", "DLQ", strconv.FormatInt(data.DLQSize, 10), "")
+	</div>
+}

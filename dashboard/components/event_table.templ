@@ -1,0 +1,52 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/relay/event"
+)
+
+// EventTable renders a table of webhook events.
+templ EventTable(events []*event.Event, basePath string) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() { ID }
+				@table.Head() { Type }
+				@table.Head() { Tenant }
+				@table.Head() { Idempotency Key }
+				@table.Head() { Created }
+			}
+		}
+		@table.Body() {
+			for _, evt := range events {
+				<tr class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+					hx-get={ basePath + "events/detail?id=" + evt.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">
+					@table.Cell() {
+						<code class="text-xs">{ truncateStr(evt.ID.String(), 20) }</code>
+					}
+					@table.Cell() {
+						<span class="font-medium">{ evt.Type }</span>
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">{ evt.TenantID }</span>
+					}
+					@table.Cell() {
+						if evt.IdempotencyKey != "" {
+							<code class="text-xs text-muted-foreground">{ truncateStr(evt.IdempotencyKey, 20) }</code>
+						} else {
+							<span class="text-muted-foreground">-</span>
+						}
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">
+							{ evt.CreatedAt.Format("Jan 02, 15:04") }
+						</span>
+					}
+				</tr>
+			}
+		}
+	}
+}

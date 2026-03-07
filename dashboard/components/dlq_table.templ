@@ -1,0 +1,62 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/relay/dlq"
+)
+
+// DLQTable renders a table of dead letter queue entries.
+templ DLQTable(entries []*dlq.Entry, basePath string) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() { Event Type }
+				@table.Head() { URL }
+				@table.Head() { Error }
+				@table.Head() { Attempts }
+				@table.Head() { Status Code }
+				@table.Head() { Failed At }
+				@table.Head() { Replayed }
+			}
+		}
+		@table.Body() {
+			for _, e := range entries {
+				<tr class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+					hx-get={ basePath + "dlq/detail?id=" + e.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">
+					@table.Cell() {
+						<span class="font-medium">{ e.EventType }</span>
+					}
+					@table.Cell() {
+						<span class="font-mono text-xs">{ truncateStr(e.URL, 30) }</span>
+					}
+					@table.Cell() {
+						<span class="text-sm text-destructive">{ truncateStr(e.Error, 30) }</span>
+					}
+					@table.Cell() {
+						<span class="text-sm">{ strconv.Itoa(e.AttemptCount) }</span>
+					}
+					@table.Cell() {
+						<span class="text-sm text-muted-foreground">{ strconv.Itoa(e.LastStatusCode) }</span>
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">
+							{ e.FailedAt.Format("Jan 02, 15:04") }
+						</span>
+					}
+					@table.Cell() {
+						if e.ReplayedAt != nil {
+							<span class="text-sm text-green-600">{ e.ReplayedAt.Format("Jan 02, 15:04") }</span>
+						} else {
+							<span class="text-muted-foreground">-</span>
+						}
+					}
+				</tr>
+			}
+		}
+	}
+}

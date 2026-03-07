@@ -1,8 +1,9 @@
 package relay
 
 import (
-	"log/slog"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
@@ -21,7 +22,7 @@ type Relay struct {
 	endpointSvc *endpoint.Service
 	engine      *delivery.Engine
 	dlqSvc      *dlq.Service
-	logger      *slog.Logger
+	logger      log.Logger
 	metrics     *observability.Metrics
 	tracer      *observability.Tracer
 }
@@ -33,7 +34,7 @@ type Option func(*Relay) error
 func New(opts ...Option) (*Relay, error) {
 	r := &Relay{
 		config: DefaultConfig(),
-		logger: slog.Default(),
+		logger: log.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		if err := opt(r); err != nil {
@@ -56,7 +57,7 @@ func WithStore(s store.Store) Option {
 }
 
 // WithLogger sets the structured logger for the Relay instance.
-func WithLogger(logger *slog.Logger) Option {
+func WithLogger(logger log.Logger) Option {
 	return func(r *Relay) error {
 		r.logger = logger
 		return nil

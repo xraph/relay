@@ -1,0 +1,174 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/relay/dlq"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ DLQDetailPage(entry *dlq.Entry) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../dlq",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to DLQ
+		}
+
+		<!-- DLQ Entry Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="flex h-12 w-12 items-center justify-center rounded-sm bg-destructive/10 text-destructive">
+							@icons.TriangleAlert(icons.WithSize(24))
+						</div>
+						<div>
+							@card.Title() {
+								{ entry.EventType }
+							}
+							@card.Description() {
+								DLQ Entry { truncateString(entry.ID.String(), 24) }
+							}
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						if entry.ReplayedAt != nil {
+							@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+								Replayed
+							}
+						} else {
+							@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+								Failed
+							}
+							@button.Button(button.Props{
+								Variant: button.VariantDefault,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":     "./detail?id=" + entry.ID.String() + "&action=replay",
+									"hx-target":  "#content",
+									"hx-swap":    "innerHTML",
+									"hx-confirm": "Are you sure you want to replay this DLQ entry?",
+								},
+							}) {
+								@icons.RotateCcw(icons.WithSize(14))
+								Replay
+							}
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@fieldRow("DLQ Entry ID", entry.ID.String())
+					@fieldRow("Event Type", entry.EventType)
+					@fieldRow("Delivery ID", entry.DeliveryID.String())
+					@fieldRow("Event ID", entry.EventID.String())
+					@fieldRow("Endpoint ID", entry.EndpointID.String())
+					@fieldRow("Tenant ID", entry.TenantID)
+					@fieldRow("URL", entry.URL)
+					@fieldRow("Attempt Count", strconv.Itoa(entry.AttemptCount))
+					if entry.LastStatusCode > 0 {
+						@fieldRow("Last Status Code", strconv.Itoa(entry.LastStatusCode))
+					}
+					@fieldRow("Failed At", entry.FailedAt.Format("Jan 02, 2006 15:04:05"))
+					@fieldRow("Created", entry.CreatedAt.Format("Jan 02, 2006 15:04:05"))
+					if entry.ReplayedAt != nil {
+						@fieldRow("Replayed At", entry.ReplayedAt.Format("Jan 02, 2006 15:04:05"))
+					}
+				</dl>
+			}
+		}
+
+		<!-- Error Details -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Error Details
+				}
+				@card.Description() {
+					The final error that caused this delivery to be moved to the DLQ.
+				}
+			}
+			@card.Content() {
+				<div class="bg-destructive/5 rounded-sm p-4 border border-destructive/20">
+					<p class="text-sm text-destructive font-mono">{ entry.Error }</p>
+				</div>
+			}
+		}
+
+		<!-- Payload -->
+		if entry.Payload != nil {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Payload
+					}
+					@card.Description() {
+						The original event payload at the time of failure.
+					}
+				}
+				@card.Content() {
+					@codeBlock(formatJSON(entry.Payload))
+				}
+			}
+		}
+
+		<!-- Quick Navigation -->
+		<div class="flex gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "../events/detail?id=" + entry.EventID.String(),
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-push-url": "true",
+				},
+			}) {
+				@icons.Zap(icons.WithSize(14))
+				View Event
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "../endpoints/detail?id=" + entry.EndpointID.String(),
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-push-url": "true",
+				},
+			}) {
+				@icons.Webhook(icons.WithSize(14))
+				View Endpoint
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "../deliveries/detail?id=" + entry.DeliveryID.String(),
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-push-url": "true",
+				},
+			}) {
+				@icons.Send(icons.WithSize(14))
+				View Delivery
+			}
+		</div>
+	</div>
+}

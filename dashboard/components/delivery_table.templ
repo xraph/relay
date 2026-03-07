@@ -1,0 +1,62 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/relay/delivery"
+)
+
+// DeliveryTable renders a table of webhook deliveries.
+templ DeliveryTable(deliveries []*delivery.Delivery, basePath string) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() { ID }
+				@table.Head() { Event }
+				@table.Head() { Endpoint }
+				@table.Head() { State }
+				@table.Head() { Attempts }
+				@table.Head() { Last Error }
+				@table.Head() { Created }
+			}
+		}
+		@table.Body() {
+			for _, d := range deliveries {
+				<tr class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+					hx-get={ basePath + "deliveries/detail?id=" + d.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">
+					@table.Cell() {
+						<code class="text-xs">{ truncateStr(d.ID.String(), 16) }</code>
+					}
+					@table.Cell() {
+						<code class="text-xs text-muted-foreground">{ truncateStr(d.EventID.String(), 16) }</code>
+					}
+					@table.Cell() {
+						<code class="text-xs text-muted-foreground">{ truncateStr(d.EndpointID.String(), 16) }</code>
+					}
+					@table.Cell() {
+						@DeliveryStateBadge(string(d.State))
+					}
+					@table.Cell() {
+						<span class="text-sm">{ strconv.Itoa(d.AttemptCount) }/{ strconv.Itoa(d.MaxAttempts) }</span>
+					}
+					@table.Cell() {
+						if d.LastError != "" {
+							<span class="text-sm text-destructive">{ truncateStr(d.LastError, 30) }</span>
+						} else {
+							<span class="text-muted-foreground">-</span>
+						}
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">
+							{ d.CreatedAt.Format("Jan 02, 15:04") }
+						</span>
+					}
+				</tr>
+			}
+		}
+	}
+}

@@ -1,0 +1,212 @@
+package pages
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/relay/delivery"
+	"github.com/xraph/relay/endpoint"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+)
+
+// EndpointDetailData holds all data needed for the endpoint detail page.
+type EndpointDetailData struct {
+	Endpoint   *endpoint.Endpoint
+	Deliveries []*delivery.Delivery
+}
+
+templ EndpointDetailPage(data EndpointDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../endpoints",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Endpoints
+		}
+
+		<!-- Endpoint Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="flex h-12 w-12 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.Webhook(icons.WithSize(24))
+						</div>
+						<div>
+							@card.Title() {
+								<span class="font-mono text-lg">{ data.Endpoint.URL }</span>
+							}
+							if data.Endpoint.Description != "" {
+								@card.Description() {
+									{ data.Endpoint.Description }
+								}
+							}
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@components.EnabledBadge(data.Endpoint.Enabled)
+						if data.Endpoint.Enabled {
+							@button.Button(button.Props{
+								Variant: button.VariantOutline,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":     "./detail?id=" + data.Endpoint.ID.String() + "&action=disable",
+									"hx-target":  "#content",
+									"hx-swap":    "innerHTML",
+									"hx-confirm": "Are you sure you want to disable this endpoint?",
+								},
+							}) {
+								Disable
+							}
+						} else {
+							@button.Button(button.Props{
+								Variant: button.VariantOutline,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":     "./detail?id=" + data.Endpoint.ID.String() + "&action=enable",
+									"hx-target":  "#content",
+									"hx-swap":    "innerHTML",
+									"hx-confirm": "Are you sure you want to enable this endpoint?",
+								},
+							}) {
+								Enable
+							}
+						}
+						@button.Button(button.Props{
+							Variant: button.VariantDestructive,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":     "./detail?id=" + data.Endpoint.ID.String() + "&action=rotate_secret",
+								"hx-target":  "#content",
+								"hx-swap":    "innerHTML",
+								"hx-confirm": "Are you sure you want to rotate the signing secret? The old secret will stop working immediately.",
+							},
+						}) {
+							Rotate Secret
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@fieldRow("Endpoint ID", data.Endpoint.ID.String())
+					@fieldRow("Tenant ID", data.Endpoint.TenantID)
+					@fieldRow("URL", data.Endpoint.URL)
+					@fieldRow("Enabled", strconv.FormatBool(data.Endpoint.Enabled))
+					if data.Endpoint.RateLimit > 0 {
+						@fieldRow("Rate Limit", strconv.Itoa(data.Endpoint.RateLimit)+" req/s")
+					}
+					@fieldRow("Created", data.Endpoint.CreatedAt.Format("Jan 02, 2006 15:04"))
+					@fieldRow("Updated", data.Endpoint.UpdatedAt.Format("Jan 02, 2006 15:04"))
+					if data.Endpoint.ScopeAppID != "" {
+						@fieldRow("App Scope", data.Endpoint.ScopeAppID)
+					}
+					if data.Endpoint.ScopeOrgID != "" {
+						@fieldRow("Org Scope", data.Endpoint.ScopeOrgID)
+					}
+				</dl>
+			}
+		}
+
+		<!-- Event Subscriptions -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-2">
+					@card.Title() {
+						Event Subscriptions
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						{ strconv.Itoa(len(data.Endpoint.EventTypes)) }
+					}
+				</div>
+				@card.Description() {
+					Glob patterns matching event types this endpoint receives.
+				}
+			}
+			@card.Content() {
+				<div class="flex flex-wrap gap-2">
+					for _, pattern := range data.Endpoint.EventTypes {
+						<code class="bg-muted rounded-sm px-2 py-1 text-sm font-mono">{ pattern }</code>
+					}
+				</div>
+			}
+		}
+
+		<!-- Custom Headers -->
+		if len(data.Endpoint.Headers) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Custom Headers
+					}
+					@card.Description() {
+						Additional HTTP headers sent with each delivery.
+					}
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+						for key, value := range data.Endpoint.Headers {
+							@fieldRow(key, value)
+						}
+					</dl>
+				}
+			}
+		}
+
+		<!-- Metadata -->
+		if len(data.Endpoint.Metadata) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+						for key, value := range data.Endpoint.Metadata {
+							@fieldRow(key, value)
+						}
+					</dl>
+				}
+			}
+		}
+
+		<!-- Recent Deliveries -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-2">
+					@card.Title() {
+						Recent Deliveries
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						{ strconv.Itoa(len(data.Deliveries)) }
+					}
+				</div>
+			}
+			@card.Content() {
+				if len(data.Deliveries) == 0 {
+					<p class="text-sm text-muted-foreground py-4 text-center">No deliveries yet.</p>
+				} else {
+					@components.DeliveryTable(data.Deliveries, "../")
+				}
+			}
+		}
+	</div>
+}
+
+// suppress unused import warning
+var _ = strings.Join

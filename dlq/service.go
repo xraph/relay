@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/endpoint"
@@ -17,13 +18,13 @@ import (
 // Service manages the dead letter queue.
 type Service struct {
 	store  Store
-	logger *slog.Logger
+	logger log.Logger
 }
 
 // NewService creates a new DLQ service.
-func NewService(store Store, logger *slog.Logger) *Service {
+func NewService(store Store, logger log.Logger) *Service {
 	if logger == nil {
-		logger = slog.Default()
+		logger = log.NewNoopLogger()
 	}
 	return &Service{
 		store:  store,

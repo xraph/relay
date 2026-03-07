@@ -1,0 +1,120 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/relay/delivery"
+	"github.com/xraph/relay/event"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+)
+
+// EventDetailData holds all data needed for the event detail page.
+type EventDetailData struct {
+	Event      *event.Event
+	Deliveries []*delivery.Delivery
+}
+
+templ EventDetailPage(data EventDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../events",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Events
+		}
+
+		<!-- Event Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="flex h-12 w-12 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.Zap(icons.WithSize(24))
+						</div>
+						<div>
+							@card.Title() {
+								{ data.Event.Type }
+							}
+							@card.Description() {
+								Event { data.Event.ID.String() }
+							}
+						</div>
+					</div>
+					@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+						{ data.Event.Type }
+					}
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@fieldRow("Event ID", data.Event.ID.String())
+					@fieldRow("Type", data.Event.Type)
+					@fieldRow("Tenant ID", data.Event.TenantID)
+					if data.Event.IdempotencyKey != "" {
+						@fieldRow("Idempotency Key", data.Event.IdempotencyKey)
+					}
+					if data.Event.ScopeAppID != "" {
+						@fieldRow("App Scope", data.Event.ScopeAppID)
+					}
+					if data.Event.ScopeOrgID != "" {
+						@fieldRow("Org Scope", data.Event.ScopeOrgID)
+					}
+					@fieldRow("Created", data.Event.CreatedAt.Format("Jan 02, 2006 15:04"))
+				</dl>
+			}
+		}
+
+		<!-- Payload -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Payload
+				}
+				@card.Description() {
+					The webhook event payload data.
+				}
+			}
+			@card.Content() {
+				@codeBlock(formatJSON(data.Event.Data))
+			}
+		}
+
+		<!-- Fan-out Deliveries -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-2">
+					@card.Title() {
+						Deliveries
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						{ strconv.Itoa(len(data.Deliveries)) }
+					}
+				</div>
+				@card.Description() {
+					Delivery attempts fanned out to matching endpoints.
+				}
+			}
+			@card.Content() {
+				if len(data.Deliveries) == 0 {
+					<p class="text-sm text-muted-foreground py-4 text-center">No deliveries created for this event.</p>
+				} else {
+					@components.DeliveryTable(data.Deliveries, "../")
+				}
+			}
+		}
+	</div>
+}

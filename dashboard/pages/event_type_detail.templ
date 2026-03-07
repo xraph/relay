@@ -1,0 +1,131 @@
+package pages
+
+import (
+	"github.com/xraph/relay/catalog"
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ EventTypeDetailPage(et *catalog.EventType) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../event-types",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Event Types
+		}
+
+		<!-- Event Type Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="flex h-12 w-12 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.ListTree(icons.WithSize(24))
+						</div>
+						<div>
+							@card.Title() {
+								{ et.Definition.Name }
+							}
+							if et.Definition.Description != "" {
+								@card.Description() {
+									{ et.Definition.Description }
+								}
+							}
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@components.DeprecatedBadge(et.IsDeprecated)
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@fieldRow("Name", et.Definition.Name)
+					if et.Definition.Group != "" {
+						@fieldRow("Group", et.Definition.Group)
+					}
+					if et.Definition.Version != "" {
+						@fieldRow("Version", et.Definition.Version)
+					}
+					if et.Definition.SchemaVersion != "" {
+						@fieldRow("Schema Version", et.Definition.SchemaVersion)
+					}
+					@fieldRow("Event Type ID", et.ID.String())
+					@fieldRow("Created", et.CreatedAt.Format("Jan 02, 2006 15:04"))
+					@fieldRow("Updated", et.UpdatedAt.Format("Jan 02, 2006 15:04"))
+					if et.IsDeprecated && et.DeprecatedAt != nil {
+						@fieldRow("Deprecated At", et.DeprecatedAt.Format("Jan 02, 2006 15:04"))
+					}
+					if et.ScopeAppID != "" {
+						@fieldRow("App Scope", et.ScopeAppID)
+					}
+				</dl>
+			}
+		}
+
+		<!-- JSON Schema -->
+		if len(et.Definition.Schema) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						JSON Schema
+					}
+					@card.Description() {
+						Payload validation schema (JSON Schema draft-07).
+					}
+				}
+				@card.Content() {
+					@codeBlock(formatJSON(et.Definition.Schema))
+				}
+			}
+		}
+
+		<!-- Example Payload -->
+		if len(et.Definition.Example) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Example Payload
+					}
+					@card.Description() {
+						Sample webhook payload for this event type.
+					}
+				}
+				@card.Content() {
+					@codeBlock(formatJSON(et.Definition.Example))
+				}
+			}
+		}
+
+		<!-- Metadata -->
+		if len(et.Metadata) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+						for key, value := range et.Metadata {
+							@fieldRow(key, value)
+						}
+					</dl>
+				}
+			}
+		}
+	</div>
+}

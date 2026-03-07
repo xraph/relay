@@ -2,9 +2,10 @@ package catalog
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/entity"
@@ -17,7 +18,7 @@ type Catalog struct {
 	cacheTTL time.Duration
 	lastLoad time.Time
 	mu       sync.RWMutex
-	logger   *slog.Logger
+	logger   log.Logger
 }
 
 // Config configures the catalog service.
@@ -26,9 +27,9 @@ type Config struct {
 }
 
 // NewCatalog creates a new Catalog backed by the given store.
-func NewCatalog(store Store, cfg Config, logger *slog.Logger) *Catalog {
+func NewCatalog(store Store, cfg Config, logger log.Logger) *Catalog {
 	if logger == nil {
-		logger = slog.Default()
+		logger = log.NewNoopLogger()
 	}
 	return &Catalog{
 		store:    store,

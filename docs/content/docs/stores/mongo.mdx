@@ -64,7 +64,7 @@ The store uses five collections, all prefixed with `relay_`:
 
 ## Migrations
 
-`Migrate()` creates indexes on all collections. Key indexes include:
+`Migrate()` creates collections with JSON Schema validation (auto-generated from Grove model structs) and applies indexes. Key indexes include:
 
 - **Event types**: unique index on `name`, indexes on `group_name` and `created_at`
 - **Endpoints**: compound indexes on `(tenant_id, enabled)` and `(tenant_id, created_at)`
@@ -77,11 +77,22 @@ The store uses five collections, all prefixed with `relay_`:
 | Aspect | Detail |
 |--------|--------|
 | Driver | Grove ORM with `mongodriver` (mongo-driver v2) |
-| Migrations | Index creation via `CreateMany` |
+| Migrations | Grove migrations with JSON Schema validation + indexes |
 | Dequeue | `FindOneAndUpdate` with state filter |
 | Transactions | MongoDB single-document atomicity |
 | Ping | `db.Ping(ctx)` |
 | Close | Closes the Grove connection |
+
+## Grove Migrations
+
+The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
+
+```go
+import mongostore "github.com/xraph/relay/store/mongo"
+
+// mongostore.Migrations is a migrate.Group for the relay mongo store.
+// Register it with the grove migration orchestrator for coordinated migrations.
+```
 
 ## When to use
 

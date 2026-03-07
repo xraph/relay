@@ -1,0 +1,139 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/relay/delivery"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ DeliveryDetailPage(d *delivery.Delivery) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../deliveries",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Deliveries
+		}
+
+		<!-- Delivery Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="flex h-12 w-12 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.Send(icons.WithSize(24))
+						</div>
+						<div>
+							@card.Title() {
+								Delivery { truncateString(d.ID.String(), 24) }
+							}
+							@card.Description() {
+								Delivery attempt details
+							}
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@components.DeliveryStateBadge(string(d.State))
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@fieldRow("Delivery ID", d.ID.String())
+					@fieldRow("State", string(d.State))
+					@fieldRow("Event ID", d.EventID.String())
+					@fieldRow("Endpoint ID", d.EndpointID.String())
+					@fieldRow("Attempts", strconv.Itoa(d.AttemptCount)+"/"+strconv.Itoa(d.MaxAttempts))
+					if !d.NextAttemptAt.IsZero() {
+						@fieldRow("Next Attempt", d.NextAttemptAt.Format("Jan 02, 2006 15:04:05"))
+					}
+					@fieldRow("Created", d.CreatedAt.Format("Jan 02, 2006 15:04:05"))
+					@fieldRow("Updated", d.UpdatedAt.Format("Jan 02, 2006 15:04:05"))
+					if d.CompletedAt != nil {
+						@fieldRow("Completed", d.CompletedAt.Format("Jan 02, 2006 15:04:05"))
+					}
+				</dl>
+			}
+		}
+
+		<!-- Last Attempt Details -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Last Attempt
+				}
+				@card.Description() {
+					Details from the most recent delivery attempt.
+				}
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+					if d.LastStatusCode > 0 {
+						@fieldRow("HTTP Status", strconv.Itoa(d.LastStatusCode))
+					}
+					if d.LastLatencyMs > 0 {
+						@fieldRow("Latency", strconv.Itoa(d.LastLatencyMs)+"ms")
+					}
+					if d.LastError != "" {
+						<div class="sm:col-span-2">
+							<dt class="text-sm font-medium text-muted-foreground">Error</dt>
+							<dd class="mt-1 text-sm text-destructive">{ d.LastError }</dd>
+						</div>
+					}
+					if d.LastResponse != "" {
+						<div class="sm:col-span-2">
+							<dt class="text-sm font-medium text-muted-foreground">Response Body</dt>
+							<dd class="mt-1">
+								@codeBlock(d.LastResponse)
+							</dd>
+						</div>
+					}
+				</dl>
+			}
+		}
+
+		<!-- Quick Navigation -->
+		<div class="flex gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "../events/detail?id=" + d.EventID.String(),
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-push-url": "true",
+				},
+			}) {
+				@icons.Zap(icons.WithSize(14))
+				View Event
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Size:    button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "../endpoints/detail?id=" + d.EndpointID.String(),
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-push-url": "true",
+				},
+			}) {
+				@icons.Webhook(icons.WithSize(14))
+				View Endpoint
+			}
+		</div>
+	</div>
+}

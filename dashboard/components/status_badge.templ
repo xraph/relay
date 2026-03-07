@@ -1,0 +1,47 @@
+package components
+
+import "github.com/xraph/forgeui/components/badge"
+
+// DeliveryStateBadge renders a colored badge for a delivery state.
+templ DeliveryStateBadge(state string) {
+	switch state {
+		case "delivered":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Delivered
+			}
+		case "failed":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Failed
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Pending
+			}
+	}
+}
+
+// EnabledBadge renders a badge showing enabled/disabled status.
+templ EnabledBadge(enabled bool) {
+	if enabled {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Enabled
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+			Disabled
+		}
+	}
+}
+
+// DeprecatedBadge renders a badge showing deprecated status.
+templ DeprecatedBadge(deprecated bool) {
+	if deprecated {
+		@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+			Deprecated
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Active
+		}
+	}
+}

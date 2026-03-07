@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
@@ -134,10 +136,10 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 		r.metrics.PendingDeliveries.Add(float64(len(deliveries)))
 	}
 
-	r.logger.DebugContext(ctx, "event sent",
-		"event_id", evt.ID,
-		"type", evt.Type,
-		"endpoints", len(endpoints),
+	r.logger.Debug("event sent",
+		log.String("event_id", evt.ID.String()),
+		log.String("type", evt.Type),
+		log.Int("endpoints", len(endpoints)),
 	)
 
 	return nil
@@ -151,6 +153,11 @@ func (r *Relay) Endpoints() *endpoint.Service {
 // Catalog returns the event type catalog.
 func (r *Relay) Catalog() *catalog.Catalog {
 	return r.catalog
+}
+
+// Health checks the health of the Relay by pinging its store.
+func (r *Relay) Health(ctx context.Context) error {
+	return r.store.Ping(ctx)
 }
 
 // Store returns the underlying store.

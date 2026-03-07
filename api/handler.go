@@ -5,10 +5,11 @@ package api
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/dlq"
@@ -22,7 +23,7 @@ type Handler struct {
 	catalog     *catalog.Catalog
 	endpointSvc *endpoint.Service
 	dlqSvc      *dlq.Service
-	logger      *slog.Logger
+	logger      log.Logger
 	mux         *http.ServeMux
 }
 
@@ -32,10 +33,10 @@ func NewHandler(
 	cat *catalog.Catalog,
 	epSvc *endpoint.Service,
 	dlqSvc *dlq.Service,
-	logger *slog.Logger,
+	logger log.Logger,
 ) *Handler {
 	if logger == nil {
-		logger = slog.Default()
+		logger = log.NewNoopLogger()
 	}
 
 	h := &Handler{
@@ -100,10 +101,10 @@ func (h *Handler) logging(next http.Handler) http.Handler {
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rw, r)
 		h.logger.Info("api request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rw.status,
-			"duration_ms", time.Since(start).Milliseconds(),
+			log.String("method", r.Method),
+			log.String("path", r.URL.Path),
+			log.Int("status", rw.status),
+			log.Any("duration_ms", time.Since(start).Milliseconds()),
 		)
 	})
 }
@@ -113,8 +114,8 @@ func (h *Handler) panicRecovery(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				h.logger.Error("panic recovered",
-					"error", rec,
-					"stack", string(debug.Stack()),
+					log.Any("error", rec),
+					log.String("stack", string(debug.Stack())),
 				)
 				writeError(w, http.StatusInternalServerError, "internal server error")
 			}

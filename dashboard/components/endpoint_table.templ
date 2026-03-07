@@ -1,0 +1,78 @@
+package components
+
+import (
+	"strings"
+
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/relay/endpoint"
+)
+
+// EndpointTable renders a table of webhook endpoints.
+templ EndpointTable(endpoints []*endpoint.Endpoint, basePath string) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() { URL }
+				@table.Head() { Description }
+				@table.Head() { Events }
+				@table.Head() { Status }
+				@table.Head() { Tenant }
+				@table.Head() { Created }
+			}
+		}
+		@table.Body() {
+			for _, ep := range endpoints {
+				<tr class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+					hx-get={ basePath + "endpoints/detail?id=" + ep.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML">
+					@table.Cell() {
+						<span class="font-mono text-sm">{ truncateURL(ep.URL, 40) }</span>
+					}
+					@table.Cell() {
+						if ep.Description != "" {
+							<span class="text-muted-foreground text-sm">{ truncateStr(ep.Description, 30) }</span>
+						} else {
+							<span class="text-muted-foreground">-</span>
+						}
+					}
+					@table.Cell() {
+						<span class="text-xs text-muted-foreground">{ strings.Join(ep.EventTypes, ", ") }</span>
+					}
+					@table.Cell() {
+						@EnabledBadge(ep.Enabled)
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">{ ep.TenantID }</span>
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">
+							{ ep.CreatedAt.Format("Jan 02, 2006") }
+						</span>
+					}
+				</tr>
+			}
+		}
+	}
+}
+
+func truncateURL(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
+}
+
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
+}

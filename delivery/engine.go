@@ -2,10 +2,10 @@ package delivery
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
 
+	log "github.com/xraph/go-utils/log"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/relay/endpoint"
@@ -46,16 +46,16 @@ type Engine struct {
 	retrier *Retrier
 	dlq     DLQPusher
 	config  EngineConfig
-	logger  *slog.Logger
+	logger  log.Logger
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
 // NewEngine creates a delivery engine.
-func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger *slog.Logger) *Engine {
+func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Logger) *Engine {
 	if logger == nil {
-		logger = slog.Default()
+		logger = log.NewNoopLogger()
 	}
 	return &Engine{
 		store:   store,
@@ -100,7 +100,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		case <-ticker.C:
 			batch, err := e.store.Dequeue(ctx, e.config.BatchSize)
 			if err != nil {
-				e.logger.ErrorContext(ctx, "dequeue failed", "error", err)
+				e.logger.Error("dequeue failed", log.Any("error", err))
 				continue
 			}
 
@@ -132,8 +132,8 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 
 	ep, err := e.store.GetEndpoint(ctx, d.EndpointID)
 	if err != nil {
-		e.logger.ErrorContext(ctx, "get endpoint failed",
-			"delivery_id", d.ID, "endpoint_id", d.EndpointID, "error", err)
+		e.logger.Error("get endpoint failed",
+			log.String("delivery_id", d.ID.String()), log.String("endpoint_id", d.EndpointID.String()), log.Any("error", err))
 		if span != nil {
 			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
 		}
@@ -142,8 +142,8 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 
 	evt, err := e.store.GetEvent(ctx, d.EventID)
 	if err != nil {
-		e.logger.ErrorContext(ctx, "get event failed",
-			"delivery_id", d.ID, "event_id", d.EventID, "error", err)
+		e.logger.Error("get event failed",
+			log.String("delivery_id", d.ID.String()), log.String("event_id", d.EventID.String()), log.Any("error", err))
 		if span != nil {
 			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
 		}
@@ -174,16 +174,16 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 			e.config.Metrics.RecordDelivery("delivered", latencySeconds)
 			e.config.Metrics.PendingDeliveries.Dec()
 		}
-		e.logger.DebugContext(ctx, "delivered",
-			"delivery_id", d.ID, "status", result.StatusCode, "latency_ms", result.LatencyMs)
+		e.logger.Debug("delivered",
+			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.Int("latency_ms", result.LatencyMs))
 
 	case Retry:
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(d.AttemptCount)
 		if e.config.Metrics != nil {
 			e.config.Metrics.RecordDelivery("retried", latencySeconds)
 		}
-		e.logger.DebugContext(ctx, "retry scheduled",
-			"delivery_id", d.ID, "attempt", d.AttemptCount, "next_at", d.NextAttemptAt)
+		e.logger.Debug("retry scheduled",
+			log.String("delivery_id", d.ID.String()), log.Int("attempt", d.AttemptCount), log.Any("next_at", d.NextAttemptAt))
 
 	case DLQ:
 		now := time.Now().UTC()
@@ -191,8 +191,8 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		d.CompletedAt = &now
 		if e.dlq != nil {
 			if dlqErr := e.dlq.PushFailed(ctx, d, ep, evt, result.Error, result.StatusCode); dlqErr != nil {
-				e.logger.ErrorContext(ctx, "push to DLQ failed",
-					"delivery_id", d.ID, "error", dlqErr)
+				e.logger.Error("push to DLQ failed",
+					log.String("delivery_id", d.ID.String()), log.Any("error", dlqErr))
 			}
 		}
 		if e.config.Metrics != nil {
@@ -200,21 +200,21 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 			e.config.Metrics.PendingDeliveries.Dec()
 			e.config.Metrics.DLQSize.Inc()
 		}
-		e.logger.WarnContext(ctx, "delivery failed permanently",
-			"delivery_id", d.ID, "status", result.StatusCode, "error", result.Error)
+		e.logger.Warn("delivery failed permanently",
+			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.String("error", result.Error))
 
 	case DisableEndpoint:
 		now := time.Now().UTC()
 		d.State = StateFailed
 		d.CompletedAt = &now
 		if disableErr := e.store.SetEnabled(ctx, d.EndpointID, false); disableErr != nil {
-			e.logger.ErrorContext(ctx, "disable endpoint failed",
-				"endpoint_id", d.EndpointID, "error", disableErr)
+			e.logger.Error("disable endpoint failed",
+				log.String("endpoint_id", d.EndpointID.String()), log.Any("error", disableErr))
 		}
 		if e.dlq != nil {
 			if dlqErr := e.dlq.PushFailed(ctx, d, ep, evt, result.Error, result.StatusCode); dlqErr != nil {
-				e.logger.ErrorContext(ctx, "push to DLQ failed",
-					"delivery_id", d.ID, "error", dlqErr)
+				e.logger.Error("push to DLQ failed",
+					log.String("delivery_id", d.ID.String()), log.Any("error", dlqErr))
 			}
 		}
 		if e.config.Metrics != nil {
@@ -222,8 +222,8 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 			e.config.Metrics.PendingDeliveries.Dec()
 			e.config.Metrics.DLQSize.Inc()
 		}
-		e.logger.WarnContext(ctx, "endpoint disabled (410 Gone)",
-			"endpoint_id", d.EndpointID, "delivery_id", d.ID)
+		e.logger.Warn("endpoint disabled (410 Gone)",
+			log.String("endpoint_id", d.EndpointID.String()), log.String("delivery_id", d.ID.String()))
 	}
 
 	// End the tracing span with the final result.
@@ -232,7 +232,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	}
 
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
-		e.logger.ErrorContext(ctx, "update delivery failed",
-			"delivery_id", d.ID, "error", updateErr)
+		e.logger.Error("update delivery failed",
+			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
 	}
 }

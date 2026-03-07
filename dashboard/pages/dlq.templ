@@ -1,0 +1,53 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/relay/dlq"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+)
+
+templ DLQPage(entries []*dlq.Entry) {
+	<div class="space-y-6">
+		<!-- Header -->
+		<div class="flex items-center justify-between">
+			<div>
+				<h1 class="text-3xl font-bold tracking-tight">Dead Letter Queue</h1>
+				<p class="text-muted-foreground mt-1">Permanently failed deliveries awaiting manual review or replay.</p>
+			</div>
+			<div class="flex items-center gap-2">
+				@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+					{ strconv.Itoa(len(entries)) } entries
+				}
+				if len(entries) > 0 {
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"hx-get":     ".?action=replay_all",
+							"hx-target":  "closest div.space-y-6",
+							"hx-swap":    "outerHTML",
+							"hx-confirm": "Are you sure you want to replay all DLQ entries?",
+						},
+					}) {
+						Replay All
+					}
+				}
+			</div>
+		</div>
+
+		<!-- Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if len(entries) == 0 {
+					@components.EmptyState("alert-triangle", "Dead letter queue is empty", "Failed deliveries that exhaust all retries will appear here.")
+				} else {
+					@components.DLQTable(entries, "./")
+				}
+			}
+		}
+	</div>
+}

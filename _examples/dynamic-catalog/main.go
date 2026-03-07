@@ -9,9 +9,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"log/slog"
 	"net/http"
+	"os"
+
+	log "github.com/xraph/go-utils/log"
 
 	relay "github.com/xraph/relay"
 	"github.com/xraph/relay/api"
@@ -20,7 +21,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	logger := slog.Default()
+	logger := log.NewNoopLogger()
 
 	// 1. Create Relay with memory store.
 	r, err := relay.New(
@@ -28,7 +29,8 @@ func main() {
 		relay.WithLogger(logger),
 	)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+		os.Exit(1)
 	}
 
 	// 2. Start the delivery engine.
@@ -56,6 +58,7 @@ func main() {
 	fmt.Println("  curl http://localhost:8080/webhooks/stats")
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "http: %v\n", err)
+		os.Exit(1)
 	}
 }

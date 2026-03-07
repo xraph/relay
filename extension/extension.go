@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/xraph/forge"
+	dashboard "github.com/xraph/forge/extensions/dashboard"
+	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/kv"
 	"github.com/xraph/vessel"
@@ -14,6 +16,7 @@ import (
 	"github.com/xraph/relay"
 	"github.com/xraph/relay/api"
 	"github.com/xraph/relay/catalog"
+	relaydash "github.com/xraph/relay/dashboard"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/observability"
@@ -33,8 +36,11 @@ const ExtensionDescription = "Composable webhook delivery engine with guaranteed
 // ExtensionVersion is the semantic version.
 const ExtensionVersion = "0.1.0"
 
-// Ensure Extension implements forge.Extension at compile time.
-var _ forge.Extension = (*Extension)(nil)
+// Ensure Extension implements forge.Extension and dashboard.DashboardAware at compile time.
+var (
+	_ forge.Extension          = (*Extension)(nil)
+	_ dashboard.DashboardAware = (*Extension)(nil)
+)
 
 // Extension adapts Relay as a Forge extension.
 // It implements the forge.Extension interface for full Forge lifecycle integration
@@ -113,6 +119,16 @@ func (e *Extension) Init(fapp forge.App) error {
 			return fmt.Errorf("relay: %w", err)
 		}
 		e.opts = append(e.opts, relay.WithStore(redisstore.New(kvStore)))
+	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
+		// Auto-discover default grove.DB from container (matches authsome/cortex pattern).
+		s, err := e.buildStoreFromGroveDB(db)
+		if err != nil {
+			return err
+		}
+		e.opts = append(e.opts, relay.WithStore(s))
+		e.Logger().Info("relay: auto-discovered grove.DB from container",
+			forge.F("driver", db.Driver().Name()),
+		)
 	}
 
 	// Build relay options from extension config + user options.
@@ -205,6 +221,17 @@ func (e *Extension) BasePath() string {
 // Deprecated: Use BasePath instead.
 func (e *Extension) Prefix() string {
 	return e.BasePath()
+}
+
+// DashboardContributor implements dashboard.DashboardAware. It returns a
+// LocalContributor that renders relay pages, widgets, and settings in the
+// Forge dashboard using templ + ForgeUI.
+func (e *Extension) DashboardContributor() contributor.LocalContributor {
+	return relaydash.New(
+		relaydash.NewManifest(),
+		e.r,
+		e.config.Config,
+	)
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---

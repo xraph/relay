@@ -1,0 +1,61 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/relay/dashboard/components"
+	"github.com/xraph/relay/event"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+)
+
+// EventsPageData holds data for the events list page.
+type EventsPageData struct {
+	Events   []*event.Event
+	TypeFilter string
+}
+
+templ EventsPage(data EventsPageData) {
+	<div class="space-y-6">
+		<!-- Header -->
+		<div class="flex items-center justify-between">
+			<div>
+				<h1 class="text-3xl font-bold tracking-tight">Events</h1>
+				<p class="text-muted-foreground mt-1">Webhook events submitted to the delivery pipeline.</p>
+			</div>
+			<div class="flex items-center gap-2">
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(len(data.Events)) } events
+				}
+			</div>
+		</div>
+
+		<!-- Filters -->
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        input.TypeSearch,
+				Name:        "type",
+				Placeholder: "Filter by event type...",
+				Attributes: templ.Attributes{
+					"hx-get":      ".",
+					"hx-trigger":  "keyup changed delay:300ms",
+					"hx-target":   "closest div.space-y-6",
+					"hx-swap":     "outerHTML",
+					"value":       data.TypeFilter,
+				},
+			})
+		</div>
+
+		<!-- Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if len(data.Events) == 0 {
+					@components.EmptyState("zap", "No events found", "Events will appear here once webhooks are sent via relay.Send().")
+				} else {
+					@components.EventTable(data.Events, "./")
+				}
+			}
+		}
+	</div>
+}

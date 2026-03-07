@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/relay/api"
 	"github.com/xraph/relay/catalog"
@@ -22,7 +23,7 @@ func testServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	s := memory.New()
-	logger := slog.Default()
+	logger := log.NewNoopLogger()
 	cat := catalog.NewCatalog(s, catalog.Config{}, logger)
 	epSvc := endpoint.NewService(s, logger)
 	dlqSvc := dlq.NewService(s, logger)

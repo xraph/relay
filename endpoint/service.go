@@ -2,8 +2,9 @@ package endpoint
 
 import (
 	"context"
-	"log/slog"
 	"net/url"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/entity"
@@ -13,13 +14,13 @@ import (
 // Service provides endpoint management operations.
 type Service struct {
 	store  Store
-	logger *slog.Logger
+	logger log.Logger
 }
 
 // NewService creates a new endpoint service.
-func NewService(store Store, logger *slog.Logger) *Service {
+func NewService(store Store, logger log.Logger) *Service {
 	if logger == nil {
-		logger = slog.Default()
+		logger = log.NewNoopLogger()
 	}
 	return &Service{
 		store:  store,
