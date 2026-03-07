@@ -359,7 +359,10 @@ func (c *Contributor) renderEventDetail(ctx context.Context, params contributor.
 		return nil, fmt.Errorf("dashboard: resolve event: %w", err)
 	}
 
-	deliveries, _ := fetchDeliveriesByEvent(ctx, c.r, evtID)
+	deliveries, err := fetchDeliveriesByEvent(ctx, c.r, evtID)
+	if err != nil {
+		deliveries = nil
+	}
 
 	return pages.EventDetailPage(pages.EventDetailData{
 		Event:      evt,
@@ -371,7 +374,10 @@ func (c *Contributor) renderDeliveries(ctx context.Context, params contributor.P
 	stateFilter := params.QueryParams["state"]
 
 	// Get deliveries from all endpoints.
-	eps, _ := fetchAllEndpoints(ctx, c.r, endpoint.ListOpts{Limit: 100})
+	eps, err := fetchAllEndpoints(ctx, c.r, endpoint.ListOpts{Limit: 100})
+	if err != nil {
+		eps = nil
+	}
 
 	opts := delivery.ListOpts{Limit: 50}
 	if stateFilter != "" {
@@ -499,7 +505,10 @@ func (c *Contributor) renderStatsWidget(ctx context.Context) (templ.Component, e
 }
 
 func (c *Contributor) renderRecentDeliveriesWidget(ctx context.Context) (templ.Component, error) {
-	eps, _ := fetchAllEndpoints(ctx, c.r, endpoint.ListOpts{Limit: 10})
+	eps, err := fetchAllEndpoints(ctx, c.r, endpoint.ListOpts{Limit: 10})
+	if err != nil {
+		eps = nil
+	}
 
 	var recentDeliveries []*delivery.Delivery
 	for _, ep := range eps {
