@@ -6,8 +6,8 @@ require (
 	github.com/a-h/templ v0.3.1001
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
-	github.com/xraph/forge v1.2.0
-	github.com/xraph/forgeui v1.2.0
+	github.com/xraph/forge v1.3.0
+	github.com/xraph/forgeui v1.3.0
 	github.com/xraph/go-utils v1.0.0
 	github.com/xraph/grove v1.0.0
 	github.com/xraph/grove/drivers/mongodriver v1.0.0

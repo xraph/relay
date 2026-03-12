@@ -145,7 +145,7 @@ func (a *ForgeAPI) createEventType(ctx forge.Context, req *CreateEventTypeForgeR
 	return nil, nil
 }
 
-func (a *ForgeAPI) listEventTypes(ctx forge.Context, req *ListEventTypesForgeRequest) ([]*catalog.EventType, error) {
+func (a *ForgeAPI) listEventTypes(ctx forge.Context, req *ListEventTypesForgeRequest) (*catalog.EventType, error) {
 	limit := req.Limit
 	if limit == 0 {
 		limit = 50
@@ -163,7 +163,12 @@ func (a *ForgeAPI) listEventTypes(ctx forge.Context, req *ListEventTypesForgeReq
 		return nil, mapError(err)
 	}
 
-	return types, nil
+	if err := ctx.JSON(http.StatusOK, types); err != nil {
+		return nil, mapError(err)
+	}
+
+	//nolint:nilnil // response already written via ctx.JSON.
+	return nil, nil
 }
 
 func (a *ForgeAPI) getEventType(ctx forge.Context, req *GetEventTypeForgeRequest) (*catalog.EventType, error) {
@@ -304,7 +309,7 @@ func (a *ForgeAPI) createEndpoint(ctx forge.Context, req *CreateEndpointForgeReq
 	return nil, nil
 }
 
-func (a *ForgeAPI) listEndpoints(ctx forge.Context, req *ListEndpointsForgeRequest) ([]*endpoint.Endpoint, error) {
+func (a *ForgeAPI) listEndpoints(ctx forge.Context, req *ListEndpointsForgeRequest) (*endpoint.Endpoint, error) {
 	if req.TenantID == "" {
 		return nil, forge.BadRequest("tenant_id query parameter is required")
 	}
@@ -324,7 +329,12 @@ func (a *ForgeAPI) listEndpoints(ctx forge.Context, req *ListEndpointsForgeReque
 		return nil, mapError(err)
 	}
 
-	return eps, nil
+	if err := ctx.JSON(http.StatusOK, eps); err != nil {
+		return nil, mapError(err)
+	}
+
+	//nolint:nilnil // response already written via ctx.JSON.
+	return nil, nil
 }
 
 func (a *ForgeAPI) getEndpoint(ctx forge.Context, req *GetEndpointForgeRequest) (*endpoint.Endpoint, error) {
@@ -502,7 +512,7 @@ func (a *ForgeAPI) sendEvent(ctx forge.Context, req *CreateEventForgeRequest) (*
 	return nil, nil
 }
 
-func (a *ForgeAPI) listEvents(ctx forge.Context, req *ListEventsForgeRequest) ([]*event.Event, error) {
+func (a *ForgeAPI) listEvents(ctx forge.Context, req *ListEventsForgeRequest) (*event.Event, error) {
 	limit := req.Limit
 	if limit == 0 {
 		limit = 50
@@ -519,7 +529,12 @@ func (a *ForgeAPI) listEvents(ctx forge.Context, req *ListEventsForgeRequest) ([
 		return nil, mapError(err)
 	}
 
-	return events, nil
+	if err := ctx.JSON(http.StatusOK, events); err != nil {
+		return nil, mapError(err)
+	}
+
+	//nolint:nilnil // response already written via ctx.JSON.
+	return nil, nil
 }
 
 func (a *ForgeAPI) getEvent(ctx forge.Context, req *GetEventForgeRequest) (*event.Event, error) {
@@ -555,7 +570,7 @@ func (a *ForgeAPI) registerDeliveryRoutes(router forge.Router) {
 	}
 }
 
-func (a *ForgeAPI) listDeliveries(ctx forge.Context, req *ListDeliveriesForgeRequest) ([]*delivery.Delivery, error) {
+func (a *ForgeAPI) listDeliveries(ctx forge.Context, req *ListDeliveriesForgeRequest) (*delivery.Delivery, error) {
 	epID, err := id.ParseEndpointID(req.EndpointID)
 	if err != nil {
 		return nil, forge.BadRequest("invalid endpoint ID")
@@ -581,7 +596,12 @@ func (a *ForgeAPI) listDeliveries(ctx forge.Context, req *ListDeliveriesForgeReq
 		return nil, mapError(listErr)
 	}
 
-	return deliveries, nil
+	if err := ctx.JSON(http.StatusOK, deliveries); err != nil {
+		return nil, mapError(err)
+	}
+
+	//nolint:nilnil // response already written via ctx.JSON.
+	return nil, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -624,7 +644,7 @@ func (a *ForgeAPI) registerDLQRoutes(router forge.Router) {
 	}
 }
 
-func (a *ForgeAPI) listDLQ(ctx forge.Context, req *ListDLQForgeRequest) ([]*dlq.Entry, error) {
+func (a *ForgeAPI) listDLQ(ctx forge.Context, req *ListDLQForgeRequest) (*dlq.Entry, error) {
 	limit := req.Limit
 	if limit == 0 {
 		limit = 50
@@ -641,7 +661,12 @@ func (a *ForgeAPI) listDLQ(ctx forge.Context, req *ListDLQForgeRequest) ([]*dlq.
 		return nil, mapError(err)
 	}
 
-	return entries, nil
+	if err := ctx.JSON(http.StatusOK, entries); err != nil {
+		return nil, mapError(err)
+	}
+
+	//nolint:nilnil // response already written via ctx.JSON.
+	return nil, nil
 }
 
 func (a *ForgeAPI) replayDLQ(ctx forge.Context, req *ReplayDLQForgeRequest) (*dlq.Entry, error) {
