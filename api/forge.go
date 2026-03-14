@@ -92,6 +92,7 @@ func (a *ForgeAPI) registerEventTypeRoutes(router forge.Router) {
 		forge.WithSummary("Get event type"),
 		forge.WithDescription("Returns details of a specific event type."),
 		forge.WithOperationID("getEventType"),
+		forge.WithRequestSchema(GetEventTypeForgeRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Event type details", catalog.EventType{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -102,6 +103,7 @@ func (a *ForgeAPI) registerEventTypeRoutes(router forge.Router) {
 		forge.WithSummary("Deprecate event type"),
 		forge.WithDescription("Soft-deletes an event type. Sending events of this type will fail."),
 		forge.WithOperationID("deleteEventType"),
+		forge.WithRequestSchema(DeleteEventTypeForgeRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -227,6 +229,7 @@ func (a *ForgeAPI) registerEndpointRoutes(router forge.Router) {
 		forge.WithSummary("Get endpoint"),
 		forge.WithDescription("Returns details of a specific endpoint."),
 		forge.WithOperationID("getEndpoint"),
+		forge.WithRequestSchema(GetEndpointForgeRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Endpoint details", endpoint.Endpoint{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -248,6 +251,7 @@ func (a *ForgeAPI) registerEndpointRoutes(router forge.Router) {
 		forge.WithSummary("Delete endpoint"),
 		forge.WithDescription("Permanently deletes an endpoint."),
 		forge.WithOperationID("deleteEndpoint"),
+		forge.WithRequestSchema(DeleteEndpointForgeRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -258,6 +262,7 @@ func (a *ForgeAPI) registerEndpointRoutes(router forge.Router) {
 		forge.WithSummary("Enable endpoint"),
 		forge.WithDescription("Re-enables a disabled endpoint."),
 		forge.WithOperationID("enableEndpoint"),
+		forge.WithRequestSchema(EndpointActionForgeRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -268,6 +273,7 @@ func (a *ForgeAPI) registerEndpointRoutes(router forge.Router) {
 		forge.WithSummary("Disable endpoint"),
 		forge.WithDescription("Disables an endpoint, pausing all deliveries."),
 		forge.WithOperationID("disableEndpoint"),
+		forge.WithRequestSchema(EndpointActionForgeRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -278,6 +284,7 @@ func (a *ForgeAPI) registerEndpointRoutes(router forge.Router) {
 		forge.WithSummary("Rotate secret"),
 		forge.WithDescription("Generates a new signing secret for the endpoint."),
 		forge.WithOperationID("rotateEndpointSecret"),
+		forge.WithRequestSchema(EndpointActionForgeRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "New signing secret", SecretForgeResponse{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -465,7 +472,7 @@ func (a *ForgeAPI) registerEventRoutes(router forge.Router) {
 	if err := g.GET("/events", a.listEvents,
 		forge.WithSummary("List events"),
 		forge.WithDescription("Returns a paginated list of events."),
-		forge.WithOperationID("listEvents"),
+		forge.WithOperationID("relayListEvents"),
 		forge.WithRequestSchema(ListEventsForgeRequest{}),
 		forge.WithListResponse(event.Event{}, http.StatusOK),
 		forge.WithErrorResponses(),
@@ -476,7 +483,8 @@ func (a *ForgeAPI) registerEventRoutes(router forge.Router) {
 	if err := g.GET("/events/:eventId", a.getEvent,
 		forge.WithSummary("Get event"),
 		forge.WithDescription("Returns details of a specific event."),
-		forge.WithOperationID("getEvent"),
+		forge.WithOperationID("relayGetEvent"),
+		forge.WithRequestSchema(GetEventForgeRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Event details", event.Event{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -625,7 +633,8 @@ func (a *ForgeAPI) registerDLQRoutes(router forge.Router) {
 	if err := g.POST("/dlq/:dlqId/replay", a.replayDLQ,
 		forge.WithSummary("Replay DLQ entry"),
 		forge.WithDescription("Re-enqueues a single DLQ entry for delivery."),
-		forge.WithOperationID("replayDLQ"),
+		forge.WithOperationID("relayReplayDLQ"),
+		forge.WithRequestSchema(ReplayDLQForgeRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
