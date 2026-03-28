@@ -38,6 +38,10 @@ type eventTypeModel struct {
 }
 
 func toEventTypeModel(et *catalog.EventType) *eventTypeModel {
+	md := et.Metadata
+	if md == nil {
+		md = map[string]string{}
+	}
 	return &eventTypeModel{
 		ID:            et.ID.String(),
 		Name:          et.Definition.Name,
@@ -50,7 +54,7 @@ func toEventTypeModel(et *catalog.EventType) *eventTypeModel {
 		IsDeprecated:  et.IsDeprecated,
 		DeprecatedAt:  et.DeprecatedAt,
 		ScopeAppID:    et.ScopeAppID,
-		Metadata:      et.Metadata,
+		Metadata:      md,
 		CreatedAt:     et.CreatedAt,
 		UpdatedAt:     et.UpdatedAt,
 	}
@@ -103,6 +107,14 @@ type endpointModel struct {
 }
 
 func toEndpointModel(ep *endpoint.Endpoint) *endpointModel {
+	headers := ep.Headers
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	md := ep.Metadata
+	if md == nil {
+		md = map[string]string{}
+	}
 	return &endpointModel{
 		ID:          ep.ID.String(),
 		TenantID:    ep.TenantID,
@@ -110,10 +122,10 @@ func toEndpointModel(ep *endpoint.Endpoint) *endpointModel {
 		Description: ep.Description,
 		Secret:      ep.Secret,
 		EventTypes:  ep.EventTypes,
-		Headers:     ep.Headers,
+		Headers:     headers,
 		Enabled:     ep.Enabled,
 		RateLimit:   ep.RateLimit,
-		Metadata:    ep.Metadata,
+		Metadata:    md,
 		CreatedAt:   ep.CreatedAt,
 		UpdatedAt:   ep.UpdatedAt,
 	}

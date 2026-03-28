@@ -13,7 +13,7 @@ type Config struct {
 	// Config embeds the core relay configuration.
 	relay.Config `json:",inline" yaml:",inline" mapstructure:",squash"`
 
-	// BasePath is the URL prefix for all relay webhook routes (default: "/webhooks").
+	// BasePath is the URL prefix for all relay webhook routes (default: "/relay").
 	BasePath string `json:"base_path" yaml:"base_path" mapstructure:"base_path"`
 
 	// DisableRoutes disables automatic route registration with the Forge router.
@@ -43,7 +43,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Config:   relay.DefaultConfig(),
-		BasePath: "/webhooks",
+		BasePath: "/relay",
 	}
 }
 

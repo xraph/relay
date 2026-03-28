@@ -61,7 +61,7 @@ func (a *ForgeAPI) RegisterRoutes(router forge.Router) {
 // ---------------------------------------------------------------------------
 
 func (a *ForgeAPI) registerEventTypeRoutes(router forge.Router) {
-	g := router.Group("", forge.WithGroupTags("event-types"))
+	g := router.Group("/v1", forge.WithGroupTags("event-types"))
 
 	if err := g.POST("/event-types", a.createEventType,
 		forge.WithSummary("Register event type"),
@@ -201,7 +201,7 @@ func (a *ForgeAPI) deleteEventType(ctx forge.Context, req *DeleteEventTypeForgeR
 // ---------------------------------------------------------------------------
 
 func (a *ForgeAPI) registerEndpointRoutes(router forge.Router) {
-	g := router.Group("", forge.WithGroupTags("endpoints"))
+	g := router.Group("/v1", forge.WithGroupTags("endpoints"))
 
 	if err := g.POST("/endpoints", a.createEndpoint,
 		forge.WithSummary("Create endpoint"),
@@ -456,7 +456,7 @@ func (a *ForgeAPI) rotateSecret(ctx forge.Context, req *EndpointActionForgeReque
 // ---------------------------------------------------------------------------
 
 func (a *ForgeAPI) registerEventRoutes(router forge.Router) {
-	g := router.Group("", forge.WithGroupTags("events"))
+	g := router.Group("/v1", forge.WithGroupTags("events"))
 
 	if err := g.POST("/events", a.sendEvent,
 		forge.WithSummary("Send event"),
@@ -564,7 +564,7 @@ func (a *ForgeAPI) getEvent(ctx forge.Context, req *GetEventForgeRequest) (*even
 // ---------------------------------------------------------------------------
 
 func (a *ForgeAPI) registerDeliveryRoutes(router forge.Router) {
-	g := router.Group("", forge.WithGroupTags("deliveries"))
+	g := router.Group("/v1", forge.WithGroupTags("deliveries"))
 
 	if err := g.GET("/endpoints/:endpointId/deliveries", a.listDeliveries,
 		forge.WithSummary("List deliveries"),
@@ -617,7 +617,7 @@ func (a *ForgeAPI) listDeliveries(ctx forge.Context, req *ListDeliveriesForgeReq
 // ---------------------------------------------------------------------------
 
 func (a *ForgeAPI) registerDLQRoutes(router forge.Router) {
-	g := router.Group("", forge.WithGroupTags("dlq"))
+	g := router.Group("/v1", forge.WithGroupTags("dlq"))
 
 	if err := g.GET("/dlq", a.listDLQ,
 		forge.WithSummary("List DLQ entries"),
@@ -720,7 +720,7 @@ func (a *ForgeAPI) replayBulkDLQ(ctx forge.Context, req *ReplayBulkDLQForgeReque
 // ---------------------------------------------------------------------------
 
 func (a *ForgeAPI) registerStatsRoutes(router forge.Router) {
-	g := router.Group("", forge.WithGroupTags("stats"))
+	g := router.Group("/v1", forge.WithGroupTags("stats"))
 
 	if err := g.GET("/stats", a.getStats,
 		forge.WithSummary("System statistics"),

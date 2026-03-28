@@ -160,7 +160,7 @@ func (e *Extension) Init(fapp forge.App) error {
 	if !e.config.DisableRoutes {
 		basePath := e.config.BasePath
 		if basePath == "" {
-			basePath = "/webhooks"
+			basePath = "/relay"
 		}
 		e.api.RegisterRoutes(fapp.Router().Group(basePath))
 	}
@@ -211,7 +211,7 @@ func (e *Extension) RegisterRoutes(router forge.Router) {
 // BasePath returns the configured URL base path.
 func (e *Extension) BasePath() string {
 	if e.config.BasePath == "" {
-		return "/webhooks"
+		return "/relay"
 	}
 	return e.config.BasePath
 }
