@@ -13,7 +13,7 @@ require (
 	github.com/xraph/grove/drivers/mongodriver v1.5.1
 	github.com/xraph/grove/drivers/pgdriver v1.5.1
 	github.com/xraph/grove/drivers/sqlitedriver v1.5.1
-	github.com/xraph/grove/kv v1.5.0
+	github.com/xraph/grove/kv v1.5.1
 	github.com/xraph/grove/kv/drivers/redisdriver v1.5.1
 	github.com/xraph/vessel v1.0.2
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
