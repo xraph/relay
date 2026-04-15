@@ -13,13 +13,13 @@ require (
 	github.com/xraph/grove/drivers/mongodriver v1.5.1
 	github.com/xraph/grove/drivers/pgdriver v1.5.1
 	github.com/xraph/grove/drivers/sqlitedriver v1.5.1
-	github.com/xraph/grove/kv v1.5.0
+	github.com/xraph/grove/kv v1.5.1
 	github.com/xraph/grove/kv/drivers/redisdriver v1.5.1
 	github.com/xraph/vessel v1.0.2
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
-	go.mongodb.org/mongo-driver/v2 v2.5.0
-	go.opentelemetry.io/otel v1.40.0
-	go.opentelemetry.io/otel/trace v1.40.0
+	go.mongodb.org/mongo-driver/v2 v2.5.1
+	go.opentelemetry.io/otel v1.43.0
+	go.opentelemetry.io/otel/trace v1.43.0
 )
 
 require (
@@ -101,7 +101,7 @@ require (
 	go.opentelemetry.io/otel/exporters/jaeger v1.17.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.40.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.40.0 // indirect
-	go.opentelemetry.io/otel/metric v1.40.0 // indirect
+	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.40.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
