@@ -32,23 +32,41 @@ func (r *Relay) wireServices() {
 	r.dlqSvc = dlq.NewService(r.store, r.logger)
 
 	r.engine = delivery.NewEngine(r.store, r.dlqSvc, delivery.EngineConfig{
-		Concurrency:    r.config.Concurrency,
-		PollInterval:   r.config.PollInterval,
-		BatchSize:      r.config.BatchSize,
-		RequestTimeout: r.config.RequestTimeout,
-		RetrySchedule:  r.config.RetrySchedule,
-		Metrics:        r.metrics,
-		Tracer:         r.tracer,
+		Concurrency:     r.config.Concurrency,
+		PollInterval:    r.config.PollInterval,
+		MaxPollInterval: r.config.MaxPollInterval,
+		BatchSize:       r.config.BatchSize,
+		RequestTimeout:  r.config.RequestTimeout,
+		RetrySchedule:   r.config.RetrySchedule,
+		Metrics:         r.metrics,
+		Tracer:          r.tracer,
 	}, r.logger)
 }
 
-// Start begins the delivery engine.
+// Start begins the delivery engine. Stores that support push notifications
+// (store.WakeNotifier, e.g. Postgres LISTEN/NOTIFY) additionally wake the
+// engine on cross-instance enqueues so deliveries are picked up without
+// waiting out the idle poll backoff.
 func (r *Relay) Start(ctx context.Context) {
 	r.engine.Start(ctx)
+
+	if wn, ok := r.store.(store.WakeNotifier); ok {
+		stop, err := wn.StartWakeListener(ctx, r.engine.Wake)
+		if err != nil {
+			r.logger.Warn("wake listener unavailable; relying on polling",
+				log.Any("error", err))
+		} else {
+			r.wakeStop = stop
+		}
+	}
 }
 
 // Stop gracefully shuts down the delivery engine.
 func (r *Relay) Stop(ctx context.Context) {
+	if r.wakeStop != nil {
+		r.wakeStop()
+		r.wakeStop = nil
+	}
 	r.engine.Stop(ctx)
 }
 
@@ -130,6 +148,10 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 	if err := r.store.EnqueueBatch(ctx, deliveries); err != nil {
 		return fmt.Errorf("relay: enqueue deliveries: %w", err)
 	}
+
+	// Nudge the delivery engine so in-process enqueues are picked up
+	// immediately instead of waiting out the idle poll backoff.
+	r.engine.Wake()
 
 	if r.metrics != nil {
 		r.metrics.EventsSentTotal.Inc()

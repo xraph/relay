@@ -10,6 +10,11 @@ type Config struct {
 	// PollInterval is how often the delivery engine checks for pending deliveries.
 	PollInterval time.Duration
 
+	// MaxPollInterval caps the delivery engine's idle backoff. When polls
+	// come back empty the interval doubles from PollInterval up to this
+	// value, so an idle relay does not hit the store every PollInterval.
+	MaxPollInterval time.Duration
+
 	// BatchSize is the maximum number of deliveries dequeued per poll cycle.
 	BatchSize int
 
@@ -44,6 +49,7 @@ func DefaultConfig() Config {
 	return Config{
 		Concurrency:     10,
 		PollInterval:    1 * time.Second,
+		MaxPollInterval: 30 * time.Second,
 		BatchSize:       50,
 		RequestTimeout:  30 * time.Second,
 		MaxRetries:      5,

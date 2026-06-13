@@ -342,3 +342,81 @@ func TestEngineNilDLQ(t *testing.T) {
 
 	engine.Stop(ctx)
 }
+
+// countingStore wraps an EngineStore and counts Dequeue calls.
+type countingStore struct {
+	delivery.EngineStore
+	dequeues atomic.Int32
+}
+
+func (c *countingStore) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, error) {
+	c.dequeues.Add(1)
+	return c.EngineStore.Dequeue(ctx, limit)
+}
+
+func TestEngineIdleBackoff(t *testing.T) {
+	cs := &countingStore{EngineStore: memory.New()}
+	cfg := delivery.EngineConfig{
+		Concurrency:     2,
+		PollInterval:    10 * time.Millisecond,
+		MaxPollInterval: 160 * time.Millisecond,
+		BatchSize:       10,
+		RequestTimeout:  time.Second,
+	}
+	engine := delivery.NewEngine(cs, &stubDLQ{}, cfg, nil)
+
+	engine.Start(context.Background())
+	time.Sleep(1 * time.Second)
+	engine.Stop(context.Background())
+
+	// Fixed-rate polling at 10ms would issue ~100 dequeues in 1s. With
+	// doubling backoff capped at 160ms the loop polls at 10, 20, 40, 80,
+	// then every 160ms: roughly 10 calls. Allow generous slack.
+	if n := cs.dequeues.Load(); n > 20 {
+		t.Fatalf("expected backoff to limit idle dequeues to ~10, got %d", n)
+	}
+}
+
+func TestEngineWakeDeliversPromptly(t *testing.T) {
+	var delivered atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		delivered.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	store := memory.New()
+	cfg := delivery.EngineConfig{
+		Concurrency:     2,
+		PollInterval:    10 * time.Millisecond,
+		MaxPollInterval: 5 * time.Second,
+		BatchSize:       10,
+		RequestTimeout:  time.Second,
+		RetrySchedule:   []time.Duration{10 * time.Millisecond},
+	}
+	engine := delivery.NewEngine(store, &stubDLQ{}, cfg, nil)
+
+	ctx := context.Background()
+	engine.Start(ctx)
+	defer engine.Stop(ctx)
+
+	// Let the idle loop back off to a multi-second interval: polls land at
+	// ~10, 30, 70, 150, 310, 630, 1270ms; after that the next poll is
+	// seconds away.
+	time.Sleep(1300 * time.Millisecond)
+
+	// New work arrives; Wake must reset the backoff and trigger an
+	// immediate poll instead of waiting out the inflated interval.
+	createTestData(t, store, srv.URL)
+	engine.Wake()
+
+	deadline := time.After(700 * time.Millisecond)
+	for delivered.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("delivery not processed promptly after Wake")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}

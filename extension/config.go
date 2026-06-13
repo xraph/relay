@@ -57,6 +57,9 @@ func (c Config) ToRelayOptions() []relay.Option {
 	if c.PollInterval > 0 {
 		opts = append(opts, relay.WithPollInterval(c.PollInterval))
 	}
+	if c.MaxPollInterval > 0 {
+		opts = append(opts, relay.WithMaxPollInterval(c.MaxPollInterval))
+	}
 	if c.BatchSize > 0 {
 		opts = append(opts, relay.WithBatchSize(c.BatchSize))
 	}

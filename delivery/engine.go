@@ -30,13 +30,17 @@ type DLQPusher interface {
 
 // EngineConfig holds engine configuration.
 type EngineConfig struct {
-	Concurrency    int
-	PollInterval   time.Duration
-	BatchSize      int
-	RequestTimeout time.Duration
-	RetrySchedule  []time.Duration
-	Metrics        *observability.Metrics
-	Tracer         *observability.Tracer
+	Concurrency  int
+	PollInterval time.Duration
+	// MaxPollInterval caps the idle backoff. When polls come back empty the
+	// poll interval doubles from PollInterval up to this value, so an idle
+	// engine stops hammering the store every PollInterval. Defaults to 30s.
+	MaxPollInterval time.Duration
+	BatchSize       int
+	RequestTimeout  time.Duration
+	RetrySchedule   []time.Duration
+	Metrics         *observability.Metrics
+	Tracer          *observability.Tracer
 }
 
 // Engine is the delivery worker pool that dequeues and processes deliveries.
@@ -48,6 +52,7 @@ type Engine struct {
 	config  EngineConfig
 	logger  log.Logger
 
+	wakeCh chan struct{}
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -57,6 +62,12 @@ func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Lo
 	if logger == nil {
 		logger = log.NewNoopLogger()
 	}
+	if cfg.MaxPollInterval <= 0 {
+		cfg.MaxPollInterval = 30 * time.Second
+	}
+	if cfg.MaxPollInterval < cfg.PollInterval {
+		cfg.MaxPollInterval = cfg.PollInterval
+	}
 	return &Engine{
 		store:   store,
 		sender:  NewSender(cfg.RequestTimeout),
@@ -64,6 +75,7 @@ func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Lo
 		dlq:     dlq,
 		config:  cfg,
 		logger:  logger,
+		wakeCh:  make(chan struct{}, 1),
 	}
 }
 
@@ -86,10 +98,24 @@ func (e *Engine) Stop(_ context.Context) {
 	e.wg.Wait()
 }
 
-// pollLoop periodically dequeues pending deliveries and dispatches them to workers.
+// Wake nudges the poll loop to check for pending deliveries immediately,
+// resetting any idle backoff. It is non-blocking and safe to call from any
+// goroutine, including before Start.
+func (e *Engine) Wake() {
+	select {
+	case e.wakeCh <- struct{}{}:
+	default:
+	}
+}
+
+// pollLoop dequeues pending deliveries and dispatches them to workers. Empty
+// polls double the wait up to MaxPollInterval so an idle engine doesn't issue
+// a dequeue (an UPDATE/findAndModify against the store) every PollInterval;
+// any dequeued work or a Wake call resets the cadence to PollInterval.
 func (e *Engine) pollLoop(ctx context.Context) {
-	ticker := time.NewTicker(e.config.PollInterval)
-	defer ticker.Stop()
+	interval := e.config.PollInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	sem := make(chan struct{}, e.config.Concurrency)
 
@@ -97,28 +123,47 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			batch, err := e.store.Dequeue(ctx, e.config.BatchSize)
-			if err != nil {
-				e.logger.Error("dequeue failed", log.Any("error", err))
-				continue
-			}
-
-			for _, d := range batch {
+		case <-e.wakeCh:
+			interval = e.config.PollInterval
+			if !timer.Stop() {
 				select {
-				case <-ctx.Done():
-					return
-				case sem <- struct{}{}:
+				case <-timer.C:
+				default:
 				}
-
-				e.wg.Add(1)
-				go func(del *Delivery) {
-					defer e.wg.Done()
-					defer func() { <-sem }()
-					e.process(ctx, del)
-				}(d)
 			}
+		case <-timer.C:
 		}
+
+		batch, err := e.store.Dequeue(ctx, e.config.BatchSize)
+		if err != nil {
+			e.logger.Error("dequeue failed", log.Any("error", err))
+		}
+
+		if len(batch) > 0 {
+			interval = e.config.PollInterval
+		} else {
+			// Back off on empty polls and on errors alike; errors hot-
+			// spinning at PollInterval would only pile onto a struggling
+			// store.
+			interval = min(interval*2, e.config.MaxPollInterval)
+		}
+
+		for _, d := range batch {
+			select {
+			case <-ctx.Done():
+				return
+			case sem <- struct{}{}:
+			}
+
+			e.wg.Add(1)
+			go func(del *Delivery) {
+				defer e.wg.Done()
+				defer func() { <-sem }()
+				e.process(ctx, del)
+			}(d)
+		}
+
+		timer.Reset(interval)
 	}
 }
 

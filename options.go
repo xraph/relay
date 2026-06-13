@@ -25,6 +25,10 @@ type Relay struct {
 	logger      log.Logger
 	metrics     *observability.Metrics
 	tracer      *observability.Tracer
+
+	// wakeStop terminates the store wake listener (store.WakeNotifier);
+	// nil when the store has no push capability.
+	wakeStop func()
 }
 
 // Option configures a Relay instance.
@@ -76,6 +80,15 @@ func WithConcurrency(n int) Option {
 func WithPollInterval(d time.Duration) Option {
 	return func(r *Relay) error {
 		r.config.PollInterval = d
+		return nil
+	}
+}
+
+// WithMaxPollInterval caps the delivery engine's idle backoff. Empty polls
+// double the poll interval up to this value; new work resets it.
+func WithMaxPollInterval(d time.Duration) Option {
+	return func(r *Relay) error {
+		r.config.MaxPollInterval = d
 		return nil
 	}
 }

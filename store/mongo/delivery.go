@@ -52,6 +52,23 @@ func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, e
 	t := now()
 	col := s.mdb.Collection(colDeliveries)
 
+	// Probe with a cheap indexed read before claiming. findAndModify is a
+	// write command even when it matches nothing, so without this gate an
+	// idle poller generates constant write traffic (locks, profiler noise,
+	// billed write ops). The claim below remains the atomic gatekeeper;
+	// losing the race after a positive probe just means an empty result.
+	probeFilter := bson.M{
+		"state":           string(delivery.StatePending),
+		"next_attempt_at": bson.M{"$lte": t},
+	}
+	probeOpts := options.FindOne().SetProjection(bson.M{"_id": 1})
+	if err := col.FindOne(ctx, probeFilter, probeOpts).Err(); err != nil {
+		if errors.Is(err, mongod.ErrNoDocuments) {
+			return result, nil
+		}
+		return nil, fmt.Errorf("relay/mongo: dequeue probe: %w", err)
+	}
+
 	for range limit {
 		filter := bson.M{
 			"state":           string(delivery.StatePending),

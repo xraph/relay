@@ -113,6 +113,7 @@ func (s *Store) Enqueue(ctx context.Context, d *delivery.Delivery) error {
 	if err != nil {
 		return fmt.Errorf("relay/redis: enqueue delivery indexes: %w", err)
 	}
+	s.notifyWake(ctx)
 	return nil
 }
 
@@ -140,6 +141,7 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 	if err != nil {
 		return fmt.Errorf("relay/redis: enqueue batch: %w", err)
 	}
+	s.notifyWake(ctx)
 	return nil
 }
 

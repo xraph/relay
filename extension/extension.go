@@ -321,6 +321,9 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = defaults.PollInterval
 	}
+	if cfg.MaxPollInterval == 0 {
+		cfg.MaxPollInterval = defaults.MaxPollInterval
+	}
 	if cfg.BatchSize == 0 {
 		cfg.BatchSize = defaults.BatchSize
 	}
@@ -370,6 +373,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if yamlConfig.PollInterval == 0 && programmaticConfig.PollInterval != 0 {
 		yamlConfig.PollInterval = programmaticConfig.PollInterval
+	}
+	if yamlConfig.MaxPollInterval == 0 && programmaticConfig.MaxPollInterval != 0 {
+		yamlConfig.MaxPollInterval = programmaticConfig.MaxPollInterval
 	}
 	if yamlConfig.BatchSize == 0 && programmaticConfig.BatchSize != 0 {
 		yamlConfig.BatchSize = programmaticConfig.BatchSize

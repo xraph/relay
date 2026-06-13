@@ -439,8 +439,11 @@ func (s *Store) ListEventsByTenant(ctx context.Context, tenantID string, opts ev
 
 func (s *Store) Enqueue(ctx context.Context, d *delivery.Delivery) error {
 	m := toDeliveryModel(d)
-	_, err := s.pg.NewInsert(m).Exec(ctx)
-	return err
+	if _, err := s.pg.NewInsert(m).Exec(ctx); err != nil {
+		return err
+	}
+	s.notifyWake(ctx)
+	return nil
 }
 
 func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error {
@@ -451,8 +454,11 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 	for i, d := range ds {
 		models[i] = *toDeliveryModel(d)
 	}
-	_, err := s.pg.NewInsert(&models).Exec(ctx)
-	return err
+	if _, err := s.pg.NewInsert(&models).Exec(ctx); err != nil {
+		return err
+	}
+	s.notifyWake(ctx)
+	return nil
 }
 
 func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, error) {
