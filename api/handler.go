@@ -140,8 +140,9 @@ func (rw *responseWriter) WriteHeader(code int) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	// Encoding to a client that has gone away is not actionable.
-	_ = json.NewEncoder(w).Encode(v)
+	// The discard satisfies gosec G104; errcheck runs with check-blank here, so
+	// it still needs the directive — same shape as store/redis/wake.go.
+	_ = json.NewEncoder(w).Encode(v) //nolint:errcheck // best-effort: client may have disconnected
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
