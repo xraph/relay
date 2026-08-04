@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	log "github.com/xraph/go-utils/log"
 
@@ -57,7 +58,17 @@ func main() {
 	fmt.Println()
 	fmt.Println("  curl http://localhost:8080/webhooks/stats")
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	// A bare ListenAndServe has no timeouts, which is what gosec G114 flags.
+	// Examples get copied, so model the configured form.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "http: %v\n", err)
 		os.Exit(1)
 	}

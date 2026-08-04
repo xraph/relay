@@ -20,6 +20,8 @@ import (
 
 const (
 	// In production, retrieve this from the endpoint's secret.
+	// #nosec G101 -- not a credential: a fixed placeholder so the example is
+	// runnable offline. It signs nothing that exists.
 	webhookSecret = "whsec_test_secret_for_demo"
 
 	// Maximum age of a webhook signature (5 minutes).
@@ -39,7 +41,17 @@ func main() {
 	fmt.Println("    -H 'X-Relay-Timestamp: <unix>' \\")
 	fmt.Println("    -d '{\"order_id\":\"ORD-001\"}'")
 
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	// A bare ListenAndServe has no timeouts, which is what gosec G114 flags.
+	// Examples get copied, so model the configured form.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           nil,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
