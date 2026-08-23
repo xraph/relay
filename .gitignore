@@ -1,1 +1,4 @@
 .claude/settings.json
+
+# ─── Local agent config ─────────────────────────────────────
+.claude/
