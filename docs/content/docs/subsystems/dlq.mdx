@@ -30,13 +30,46 @@ Replay re-enqueues a failed delivery for another round of attempts:
 
 ```go
 err := r.DLQ().Replay(ctx, dlqEntryID)
+if errors.Is(err, relay.ErrAlreadyReplayed) {
+    // Already sent once. Nothing was enqueued.
+}
 ```
 
-The DLQ entry is marked with `ReplayedAt` timestamp. A new delivery is created in `pending` state.
+A new delivery is created in `pending` state with the retry budget from
+`WithMaxRetries`, so it gets the whole backoff schedule again, not a single
+attempt. The DLQ entry is marked with a `ReplayedAt` timestamp and stays where
+it is.
+
+Replay sends a real webhook to a real receiver, and the receiver can't tell it
+apart from the original. So you can only replay an entry once. A second call
+returns `ErrAlreadyReplayed` and enqueues nothing.
+
+## Replayed entries stay in the queue
+
+This one catches people out. Replaying an entry marks it; it doesn't remove it.
+The dead letter queue is a record of what failed, not a worklist that empties
+as you go, so `CountDLQ` counts replayed entries too.
+
+If you alert on DLQ depth, that number stops falling once somebody starts
+working through the queue. Alert on the entries that haven't been replayed
+yet.
 
 ## Bulk replay
 
-The admin API supports bulk replay via `POST /dlq/replay`.
+```go
+n, err := r.DLQ().ReplayBulk(ctx, from, to)
+```
+
+This replays every entry that failed between `from` and `to` and hasn't been
+replayed already. The window is on `failed_at`. Entries already replayed are
+skipped, so running it twice over the same window sends nothing the second
+time. `n` is how many it actually replayed.
+
+If it fails partway through, you get the count so far along with the error.
+Those deliveries were already enqueued and will go out, so check `n` before
+you retry.
+
+The admin API exposes the same thing as `POST /dlq/replay`.
 
 ## DLQ service
 
@@ -44,6 +77,10 @@ The admin API supports bulk replay via `POST /dlq/replay`.
 type Service struct { ... }
 
 func (s *Service) Get(ctx context.Context, id id.ID) (*Entry, error)
+func (s *Service) List(ctx context.Context, opts ListOpts) ([]*Entry, error)
 func (s *Service) Replay(ctx context.Context, id id.ID) error
+func (s *Service) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error)
+func (s *Service) Purge(ctx context.Context, before time.Time) (int64, error)
+func (s *Service) Count(ctx context.Context) (int64, error)
 func (s *Service) PushFailed(ctx context.Context, d *delivery.Delivery, ep *endpoint.Endpoint, evt *event.Event, lastError string, lastStatusCode int) error
 ```
