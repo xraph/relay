@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -155,11 +156,25 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 	return nil
 }
 
+// ErrEndpointIndexNotBuilt is returned by an every-tenant endpoint listing
+// when the global endpoint index has never been built. Without this, the list
+// would be empty, and an empty list reads as "no endpoints": an audit run
+// before Migrate would report clean. Run Migrate to build the index.
+var ErrEndpointIndexNotBuilt = errors.New(
+	"relay/redis: the every-tenant endpoint index has not been built; run Migrate")
+
 func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoint.ListOpts) ([]*endpoint.Endpoint, error) {
-	// An empty tenant lists every tenant, the same as ListDLQ. It used to read
-	// the per-tenant index for the empty string, which is always empty.
+	// An empty tenant lists every tenant, the same as ListDLQ, from the
+	// global index. That index is only trustworthy once Migrate has built it.
 	index := zEndpointTenant + tenantID
 	if tenantID == "" {
+		built, err := s.rdb.Exists(ctx, endpointIndexBuilt).Result()
+		if err != nil {
+			return nil, fmt.Errorf("relay/redis: check endpoint index: %w", err)
+		}
+		if built == 0 {
+			return nil, ErrEndpointIndexNotBuilt
+		}
 		index = zEndpointAll
 	}
 	ids, err := s.rdb.ZRange(ctx, index, 0, -1).Result()
@@ -168,24 +183,38 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 	}
 
 	result := make([]*endpoint.Endpoint, 0, len(ids))
+	var stale []any
 	for _, entryID := range ids {
 		var m endpointModel
-		if err := s.getEntity(ctx, entityKey(prefixEndpoint, entryID), &m); err != nil {
-			if isNotFound(err) {
+		if getErr := s.getEntity(ctx, entityKey(prefixEndpoint, entryID), &m); getErr != nil {
+			// The record is gone but the index still names it: an older
+			// version deleted it without knowing about this index, or a
+			// delete raced the backfill. Only a definite not-found counts;
+			// any other error is returned, never treated as missing.
+			if isNotFound(getErr) {
+				stale = append(stale, entryID)
 				continue
 			}
-			return nil, err
+			return nil, getErr
 		}
 		if opts.Enabled != nil && m.Enabled != *opts.Enabled {
 			continue
 		}
-		ep, err := fromEndpointModel(&m)
-		if err != nil {
-			return nil, err
+		ep, convErr := fromEndpointModel(&m)
+		if convErr != nil {
+			return nil, convErr
 		}
 		result = append(result, ep)
 	}
+	if len(stale) > 0 {
+		// Best-effort tidy-up. A failure here costs speed, not correctness:
+		// the ids are skipped either way.
+		_ = s.rdb.ZRem(ctx, index, stale...).Err() //nolint:errcheck // best-effort: the stale ids are skipped whether or not this succeeds
+	}
 
+	// Paging happens after filtering, never inside ZRANGE. Skipped and
+	// disabled ids would otherwise shorten a page, and callers such as
+	// ListUnsigned treat a short page as the last one.
 	return applyPagination(result, opts.Offset, opts.Limit), nil
 }
 

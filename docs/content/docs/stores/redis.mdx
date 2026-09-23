@@ -64,6 +64,7 @@ Entities are stored as JSON blobs under prefixed keys. Indexes use Redis sorted 
 |-------------|------|---------|
 | `relay:z:evtype:all` | Sorted set | All event types by creation time |
 | `relay:z:ep:tenant:<tid>` | Sorted set | Endpoints per tenant |
+| `relay:z:ep:all` | Sorted set | Every endpoint across tenants, for an every-tenant listing |
 | `relay:z:evt:all` | Sorted set | All events by creation time |
 | `relay:z:evt:tenant:<tid>` | Sorted set | Events per tenant |
 | `relay:z:del:pending` | Sorted set | Pending deliveries by `next_attempt_at` |
@@ -81,14 +82,39 @@ Entities are stored as JSON blobs under prefixed keys. Indexes use Redis sorted 
 
 ## Migrations
 
-`Migrate()` is a no-op -- Redis does not require schema migrations. Keys and indexes are created on demand as entities are stored.
+Redis has no schema, but `Migrate()` still has work to do: it builds the
+`relay:z:ep:all` index that lists endpoints across every tenant.
+
+Older versions only indexed endpoints per tenant, so after an upgrade the global
+index is empty until `Migrate()` fills it from the per-tenant indexes. Relay's
+extension runs `Migrate()` at startup unless you set `DisableMigrate`. If you
+disable it, or build the store yourself, call `Migrate()` once before you rely on
+an every-tenant listing.
+
+Until it has run, listing endpoints with an empty tenant returns
+`ErrEndpointIndexNotBuilt` rather than an empty list. An empty list would read as
+"no endpoints", which is how an audit of unsigned endpoints could report clean.
+Listing a named tenant works either way.
+
+Two marker keys track it:
+
+| Key | Expires | Purpose |
+|-----|---------|---------|
+| `relay:migrated:ep_all:built` | Never | The index has been built and can be trusted |
+| `relay:migrated:ep_all:v1` | 24 hours | The backfill ran recently, so boots skip it |
+
+The second one expires on purpose. If you roll back to a version that did not
+maintain the global index, endpoints created during the rollback are missing
+from it until the backfill runs again, which happens within a day of
+redeploying. To repair it straight away, delete `relay:migrated:ep_all:v1` and
+restart, or call `Migrate()`.
 
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
 | Driver | Grove KV with `redisdriver` (go-redis v9) |
-| Migrations | No-op |
+| Migrations | Builds the global endpoint index; see above |
 | Dequeue | Sorted set range + atomic key update |
 | Transactions | Redis single-key atomicity |
 | JSON fields | All entities stored as JSON blobs |

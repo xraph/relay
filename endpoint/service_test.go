@@ -383,21 +383,41 @@ func TestListUnsignedAuditsEveryTenant(t *testing.T) {
 	a := unsignedEndpoint(t, store, "t1")
 	b := unsignedEndpoint(t, store, "t2")
 
-	for _, tenant := range []string{"", "   "} {
-		got, err := svc.ListUnsigned(ctx(), tenant)
-		if err != nil {
-			t.Fatalf("ListUnsigned(%q): %v", tenant, err)
+	got, err := svc.ListUnsigned(ctx(), "")
+	if err != nil {
+		t.Fatalf("ListUnsigned(\"\"): %v", err)
+	}
+	seen := map[string]bool{}
+	for _, ep := range got {
+		seen[ep.ID.String()] = true
+	}
+	if !seen[a.ID.String()] || !seen[b.ID.String()] {
+		t.Fatalf("ListUnsigned(\"\") did not find unsigned endpoints in both tenants "+
+			"(t1=%v t2=%v)", seen[a.ID.String()], seen[b.ID.String()])
+	}
+}
+
+// Only "" means every tenant. A tenant of spaces is a real tenant, because
+// Create accepts one, so it is matched exactly as ListEndpoints matches it.
+// Treating it as "every tenant" would hand that tenant every other tenant's
+// unsigned endpoints, headers and metadata included.
+func TestListUnsignedTreatsAWhitespaceTenantAsATenant(t *testing.T) {
+	store := memory.New()
+	svc := endpoint.NewService(store, nil)
+	mine := unsignedEndpoint(t, store, "   ")
+	theirs := unsignedEndpoint(t, store, "t1")
+
+	got, err := svc.ListUnsigned(ctx(), "   ")
+	if err != nil {
+		t.Fatalf("ListUnsigned: %v", err)
+	}
+	for _, ep := range got {
+		if ep.ID == theirs.ID {
+			t.Fatal("auditing the tenant \"   \" returned another tenant's endpoint")
 		}
-		seen := map[string]bool{}
-		for _, ep := range got {
-			seen[ep.ID.String()] = true
-		}
-		// A tenant of spaces is no tenant. Reading it literally would match
-		// nothing and report a clean audit, the worst possible wrong answer.
-		if !seen[a.ID.String()] || !seen[b.ID.String()] {
-			t.Fatalf("ListUnsigned(%q) did not find unsigned endpoints in both tenants "+
-				"(t1=%v t2=%v)", tenant, seen[a.ID.String()], seen[b.ID.String()])
-		}
+	}
+	if len(got) != 1 || got[0].ID != mine.ID {
+		t.Fatalf("auditing the tenant \"   \" returned %d endpoints, want exactly its own", len(got))
 	}
 }
 

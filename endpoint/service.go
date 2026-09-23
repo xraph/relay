@@ -118,7 +118,7 @@ func (svc *Service) Delete(ctx context.Context, epID id.ID) error {
 	return svc.store.DeleteEndpoint(ctx, epID)
 }
 
-// List returns endpoints for a tenant.
+// List returns endpoints for a tenant. An empty tenantID lists every tenant.
 func (svc *Service) List(ctx context.Context, tenantID string, opts ListOpts) ([]*Endpoint, error) {
 	return svc.store.ListEndpoints(ctx, tenantID, opts)
 }
@@ -143,18 +143,18 @@ var unsignedPageSize = 10000
 // supplied (whitespace included), so an endpoint can only reach this state
 // through the store interface directly.
 //
-// An empty tenantID audits every tenant. So does a tenantID of only
-// whitespace, which is no tenant at all: read literally it would match
-// nothing and report a clean audit.
+// An empty tenantID audits every tenant. Any other value, whitespace
+// included, is matched exactly, as ListEndpoints matches it: Create accepts a
+// tenant of spaces, so it is a real tenant, and widening it to "every tenant"
+// would hand it every other tenant's unsigned endpoints.
 //
 // It reads every page the store has. An audit that stopped after one page
 // would report a partial result as a complete one, and across every tenant
 // one page is a real limit.
 func (svc *Service) ListUnsigned(ctx context.Context, tenantID string) ([]*Endpoint, error) {
-	tenant := strings.TrimSpace(tenantID)
 	out := make([]*Endpoint, 0)
 	for offset := 0; ; {
-		page, err := svc.store.ListEndpoints(ctx, tenant, ListOpts{Offset: offset, Limit: unsignedPageSize})
+		page, err := svc.store.ListEndpoints(ctx, tenantID, ListOpts{Offset: offset, Limit: unsignedPageSize})
 		if err != nil {
 			return nil, err
 		}

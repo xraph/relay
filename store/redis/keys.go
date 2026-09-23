@@ -1,5 +1,7 @@
 package redis
 
+import "time"
+
 // Key prefixes for primary entity storage.
 const (
 	prefixEventType = "relay:evtype:"
@@ -37,10 +39,20 @@ const (
 	sEndpointEnabled = "relay:s:ep:tenant:" // + tenantID + ":enabled"
 )
 
-// Markers recording that a one-time data migration has run, so Migrate does
-// not repeat it on every boot.
+// Markers for the global endpoint index. Two keys with different jobs:
+//
+// migratedEndpointAllV1 says the backfill ran recently, so a normal boot skips
+// it. It expires, so the backfill re-runs now and then and repairs the index
+// after a rollback to a version that did not maintain it.
+//
+// endpointIndexBuilt says the index has been built at least once and can be
+// trusted. It never expires. An every-tenant list refuses to answer without
+// it, because an unbuilt index looks exactly like "no endpoints".
 const (
 	migratedEndpointAllV1 = "relay:migrated:ep_all:v1"
+	endpointIndexBuilt    = "relay:migrated:ep_all:built"
+
+	endpointBackfillTTL = 24 * time.Hour
 )
 
 // entityKey returns the primary key for an entity.
