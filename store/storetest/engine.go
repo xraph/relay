@@ -26,6 +26,7 @@ type EngineBackend interface {
 	GetDelivery(ctx context.Context, delID id.ID) (*delivery.Delivery, error)
 	CreateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error
 	CreateEvent(ctx context.Context, evt *event.Event) error
+	ListAttempts(ctx context.Context, delID id.ID) ([]*delivery.Attempt, error)
 }
 
 // RunEngineSuite runs the real delivery engine against a backend.
@@ -56,6 +57,41 @@ func RunEngineSuite(t *testing.T, open func(t *testing.T) EngineBackend) {
 		}
 		if n := calls.Load(); n != 2 {
 			t.Errorf("receiver saw %d requests, want 2", n)
+		}
+
+		// The history the retry sequence is drawn from.
+		attempts, err := s.ListAttempts(context.Background(), d.ID)
+		if err != nil {
+			t.Fatalf("list attempts: %v", err)
+		}
+		if len(attempts) != 2 {
+			t.Fatalf("got %d attempts, want 2", len(attempts))
+		}
+		if a := attempts[0]; a.StatusCode != 500 || a.Outcome != delivery.OutcomeRetry || a.NextAttemptAt == nil {
+			t.Errorf("first attempt (%d, %q, next %v), want (500, retry, set)", a.StatusCode, a.Outcome, a.NextAttemptAt)
+		}
+		if a := attempts[1]; a.StatusCode != 200 || a.Outcome != delivery.OutcomeDelivered || a.NextAttemptAt != nil {
+			t.Errorf("second attempt (%d, %q, next %v), want (200, delivered, nil)", a.StatusCode, a.Outcome, a.NextAttemptAt)
+		}
+	})
+
+	t.Run("records a 410 as the attempt that disabled the endpoint", func(t *testing.T) {
+		s := open(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusGone)
+		}))
+		t.Cleanup(srv.Close)
+
+		d := seedDelivery(t, s, srv.URL, 3)
+		runEngine(t, s)
+
+		waitForState(t, s, d.ID, delivery.StateFailed)
+		attempts, err := s.ListAttempts(context.Background(), d.ID)
+		if err != nil {
+			t.Fatalf("list attempts: %v", err)
+		}
+		if len(attempts) != 1 || attempts[0].Outcome != delivery.OutcomeEndpointDisabled {
+			t.Errorf("attempts %v, want one endpoint_disabled", attempts)
 		}
 	})
 

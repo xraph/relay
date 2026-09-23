@@ -24,14 +24,15 @@ var _ relaystore.Store = (*Store)(nil)
 type Store struct {
 	mu sync.RWMutex
 
-	eventTypes      map[string]*catalog.EventType // keyed by name
-	eventTypesByID  map[string]*catalog.EventType // keyed by ID string
-	endpoints       map[string]*endpoint.Endpoint // keyed by ID string
-	events          map[string]*event.Event       // keyed by ID string
-	eventsByIdemKey map[string]*event.Event       // keyed by idempotency key
-	deliveries      map[string]*delivery.Delivery // keyed by ID string
-	locked          map[string]bool               // simulates SKIP LOCKED
-	dlqEntries      map[string]*dlq.Entry         // keyed by ID string
+	eventTypes      map[string]*catalog.EventType  // keyed by name
+	eventTypesByID  map[string]*catalog.EventType  // keyed by ID string
+	endpoints       map[string]*endpoint.Endpoint  // keyed by ID string
+	events          map[string]*event.Event        // keyed by ID string
+	eventsByIdemKey map[string]*event.Event        // keyed by idempotency key
+	deliveries      map[string]*delivery.Delivery  // keyed by ID string
+	locked          map[string]bool                // simulates SKIP LOCKED
+	dlqEntries      map[string]*dlq.Entry          // keyed by ID string
+	attempts        map[string][]*delivery.Attempt // keyed by delivery ID string
 
 	closed bool
 }
@@ -47,6 +48,7 @@ func New() *Store {
 		deliveries:      make(map[string]*delivery.Delivery),
 		locked:          make(map[string]bool),
 		dlqEntries:      make(map[string]*dlq.Entry),
+		attempts:        make(map[string][]*delivery.Attempt),
 	}
 }
 
@@ -684,4 +686,55 @@ func applyPagination[T any](items []*T, offset, limit int) []*T {
 	}
 
 	return items
+}
+
+// ──────────────────────────────────────────────────
+// Attempts
+// ──────────────────────────────────────────────────
+
+// RecordAttempt stores one attempt.
+func (s *Store) RecordAttempt(_ context.Context, a *delivery.Attempt) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *a
+	key := a.DeliveryID.String()
+	s.attempts[key] = append(s.attempts[key], &cp)
+	return nil
+}
+
+// ListAttempts returns a delivery's attempts by attempt number.
+func (s *Store) ListAttempts(_ context.Context, delID id.ID) ([]*delivery.Attempt, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	src := s.attempts[delID.String()]
+	out := make([]*delivery.Attempt, 0, len(src))
+	for _, a := range src {
+		cp := *a
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AttemptNum < out[j].AttemptNum })
+	return out, nil
+}
+
+// PurgeAttempts deletes attempts made before the cutoff.
+func (s *Store) PurgeAttempts(_ context.Context, before time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int64
+	for key, list := range s.attempts {
+		kept := list[:0]
+		for _, a := range list {
+			if a.AttemptedAt.Before(before) {
+				n++
+				continue
+			}
+			kept = append(kept, a)
+		}
+		if len(kept) == 0 {
+			delete(s.attempts, key)
+		} else {
+			s.attempts[key] = kept
+		}
+	}
+	return n, nil
 }

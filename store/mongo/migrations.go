@@ -200,6 +200,24 @@ func init() {
 			},
 			Down: func(context.Context, migrate.Executor) error { return nil },
 		},
+		&migrate.Migration{
+			Name:    "create_relay_delivery_attempts",
+			Version: "20260923000003",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				return mexec.CreateIndexes(ctx, colAttempts, migrationIndexes()[colAttempts])
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				return mexec.DropCollection(ctx, (*attemptModel)(nil))
+			},
+		},
 	)
 }
 

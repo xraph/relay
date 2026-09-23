@@ -710,3 +710,42 @@ func now() time.Time {
 func isNoRows(err error) bool {
 	return errors.Is(err, sql.ErrNoRows)
 }
+
+// ==================== Attempts ====================
+
+// RecordAttempt stores one attempt.
+func (s *Store) RecordAttempt(ctx context.Context, a *delivery.Attempt) error {
+	_, err := s.sdb.NewInsert(toAttemptModel(a)).Exec(ctx)
+	return err
+}
+
+// ListAttempts returns a delivery's attempts by attempt number.
+func (s *Store) ListAttempts(ctx context.Context, delID id.ID) ([]*delivery.Attempt, error) {
+	var models []attemptModel
+	if err := s.sdb.NewSelect(&models).
+		Where("delivery_id = ?", delID.String()).
+		OrderExpr("attempt_num ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]*delivery.Attempt, 0, len(models))
+	for i := range models {
+		a, err := fromAttemptModel(&models[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// PurgeAttempts deletes attempts made before the cutoff.
+func (s *Store) PurgeAttempts(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.sdb.NewDelete((*attemptModel)(nil)).
+		Where("attempted_at < ?", before).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

@@ -207,6 +207,36 @@ ALTER TABLE relay_deliveries DROP COLUMN tenant_id;
 				return err
 			},
 		},
+		// One row per HTTP attempt, written by the engine. Listed per
+		// delivery by attempt number and purged by age.
+		&migrate.Migration{
+			Name:    "create_relay_delivery_attempts",
+			Version: "20260923000002",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS relay_delivery_attempts (
+    id              TEXT PRIMARY KEY,
+    delivery_id     TEXT NOT NULL,
+    attempt_num     INTEGER NOT NULL,
+    status_code     INTEGER NOT NULL DEFAULT 0,
+    error           TEXT NOT NULL DEFAULT '',
+    response        TEXT NOT NULL DEFAULT '',
+    latency_ms      INTEGER NOT NULL DEFAULT 0,
+    outcome         TEXT NOT NULL,
+    next_attempt_at TEXT,
+    attempted_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_relay_attempts_delivery ON relay_delivery_attempts (delivery_id, attempt_num);
+CREATE INDEX IF NOT EXISTS idx_relay_attempts_attempted ON relay_delivery_attempts (attempted_at);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS relay_delivery_attempts`)
+				return err
+			},
+		},
 	)
 }
 

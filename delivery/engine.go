@@ -24,6 +24,7 @@ type EngineStore interface {
 	GetEndpoint(ctx context.Context, epID id.ID) (*endpoint.Endpoint, error)
 	GetEvent(ctx context.Context, evtID id.ID) (*event.Event, error)
 	SetEnabled(ctx context.Context, epID id.ID, enabled bool) error
+	RecordAttempt(ctx context.Context, a *Attempt) error
 }
 
 // DLQPusher pushes permanently failed deliveries to the dead letter queue.
@@ -218,6 +219,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	}
 
 	// Perform the HTTP delivery.
+	attemptedAt := time.Now().UTC()
 	d.AttemptCount++
 	result := e.sender.Send(ctx, ep, evt, d)
 
@@ -296,6 +298,29 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		}
 		e.logger.Warn("endpoint disabled (410 Gone)",
 			log.String("endpoint_id", d.EndpointID.String()), log.String("delivery_id", d.ID.String()))
+	}
+
+	// One row per attempt, written before the delivery update. A failed
+	// write is logged and does not stop the update: a gap in the history is
+	// better than a delivery left claimed.
+	attempt := &Attempt{
+		ID:          id.NewAttemptID(),
+		DeliveryID:  d.ID,
+		AttemptNum:  d.AttemptCount,
+		StatusCode:  result.StatusCode,
+		Error:       result.Error,
+		Response:    result.Response,
+		LatencyMs:   result.LatencyMs,
+		Outcome:     outcomeOf(decision),
+		AttemptedAt: attemptedAt,
+	}
+	if decision == Retry {
+		next := d.NextAttemptAt
+		attempt.NextAttemptAt = &next
+	}
+	if recErr := e.store.RecordAttempt(ctx, attempt); recErr != nil {
+		e.logger.Error("record attempt failed",
+			log.String("delivery_id", d.ID.String()), log.Any("error", recErr))
 	}
 
 	// End the tracing span with the final result.

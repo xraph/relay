@@ -23,6 +23,7 @@ const (
 	colEvents     = "relay_events"
 	colDeliveries = "relay_deliveries"
 	colDLQ        = "relay_dlq"
+	colAttempts   = "relay_delivery_attempts"
 )
 
 // Compile-time interface check.
@@ -153,6 +154,10 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "state", Value: 1}, {Key: "next_attempt_at", Value: 1}}},
 			{Keys: bson.D{{Key: "endpoint_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "event_id", Value: 1}}},
+		},
+		colAttempts: {
+			{Keys: bson.D{{Key: "delivery_id", Value: 1}, {Key: "attempt_num", Value: 1}}},
+			{Keys: bson.D{{Key: "attempted_at", Value: 1}}},
 		},
 		colDLQ: {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "failed_at", Value: -1}}},

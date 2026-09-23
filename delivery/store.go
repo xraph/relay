@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"time"
 
 	"github.com/xraph/relay/id"
 )
@@ -32,4 +33,18 @@ type Store interface {
 
 	// CountPending returns the number of deliveries awaiting attempt.
 	CountPending(ctx context.Context) (int64, error)
+
+	// RecordAttempt stores one attempt. The engine writes it synchronously,
+	// next to UpdateDelivery.
+	RecordAttempt(ctx context.Context, a *Attempt) error
+
+	// ListAttempts returns a delivery's attempts by attempt number. The
+	// count is bounded by MaxAttempts, so it is not paged. An unknown
+	// delivery has an empty list, not an error.
+	ListAttempts(ctx context.Context, delID id.ID) ([]*Attempt, error)
+
+	// PurgeAttempts deletes attempts made before the cutoff and returns how
+	// many went. The table grows with every attempt, so it needs this the
+	// way the DLQ needs Purge.
+	PurgeAttempts(ctx context.Context, before time.Time) (int64, error)
 }

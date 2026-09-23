@@ -9,6 +9,7 @@ const (
 	prefixEvent     = "relay:evt:"
 	prefixDelivery  = "relay:del:"
 	prefixDLQ       = "relay:dlq:"
+	prefixAttempt   = "relay:att:"
 )
 
 // Key prefixes for unique indexes.
@@ -31,6 +32,8 @@ const (
 	zDLQAll         = "relay:z:dlq:all"
 	zDLQTenant      = "relay:z:dlq:tenant:" // + tenant ID
 	zDLQEndpoint    = "relay:z:dlq:ep:"     // + endpoint ID
+	zAttemptDel     = "relay:z:att:del:"    // + delivery ID, scored by attempt number
+	zAttemptAll     = "relay:z:att:all"     // every attempt, scored by attempted-at
 )
 
 // Key prefixes for set indexes.

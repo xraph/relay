@@ -398,3 +398,58 @@ func fromDLQEntryModel(m *dlqEntryModel) (*dlq.Entry, error) {
 		FailedAt:       m.FailedAt,
 	}, nil
 }
+
+// --- Attempt models ---
+
+type attemptModel struct {
+	grove.BaseModel `grove:"table:relay_delivery_attempts"`
+
+	ID            string     `grove:"id,pk"`
+	DeliveryID    string     `grove:"delivery_id"`
+	AttemptNum    int        `grove:"attempt_num"`
+	StatusCode    int        `grove:"status_code"`
+	Error         string     `grove:"error"`
+	Response      string     `grove:"response"`
+	LatencyMs     int        `grove:"latency_ms"`
+	Outcome       string     `grove:"outcome"`
+	NextAttemptAt *time.Time `grove:"next_attempt_at"`
+	AttemptedAt   time.Time  `grove:"attempted_at"`
+}
+
+func toAttemptModel(a *delivery.Attempt) *attemptModel {
+	return &attemptModel{
+		ID:            a.ID.String(),
+		DeliveryID:    a.DeliveryID.String(),
+		AttemptNum:    a.AttemptNum,
+		StatusCode:    a.StatusCode,
+		Error:         a.Error,
+		Response:      a.Response,
+		LatencyMs:     a.LatencyMs,
+		Outcome:       string(a.Outcome),
+		NextAttemptAt: a.NextAttemptAt,
+		AttemptedAt:   a.AttemptedAt,
+	}
+}
+
+func fromAttemptModel(m *attemptModel) (*delivery.Attempt, error) {
+	attID, err := id.ParseAttemptID(m.ID)
+	if err != nil {
+		return nil, fmt.Errorf("parse attempt ID %q: %w", m.ID, err)
+	}
+	delID, err := id.ParseDeliveryID(m.DeliveryID)
+	if err != nil {
+		return nil, fmt.Errorf("parse delivery ID %q: %w", m.DeliveryID, err)
+	}
+	return &delivery.Attempt{
+		ID:            attID,
+		DeliveryID:    delID,
+		AttemptNum:    m.AttemptNum,
+		StatusCode:    m.StatusCode,
+		Error:         m.Error,
+		Response:      m.Response,
+		LatencyMs:     m.LatencyMs,
+		Outcome:       delivery.Outcome(m.Outcome),
+		NextAttemptAt: m.NextAttemptAt,
+		AttemptedAt:   m.AttemptedAt,
+	}, nil
+}

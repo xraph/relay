@@ -29,6 +29,7 @@ const (
 	PrefixEvent     Prefix = "evt"
 	PrefixDelivery  Prefix = "del"
 	PrefixDLQ       Prefix = "dlq"
+	PrefixAttempt   Prefix = "att"
 	PrefixSecret    Prefix = "whsec"
 )
 
@@ -125,6 +126,9 @@ func NewDeliveryID() ID { return New(PrefixDelivery) }
 // NewDLQID generates a new unique DLQ entry ID.
 func NewDLQID() ID { return New(PrefixDLQ) }
 
+// NewAttemptID generates a new unique delivery attempt ID.
+func NewAttemptID() ID { return New(PrefixAttempt) }
+
 // NewSecretID generates a new unique secret ID.
 func NewSecretID() ID { return New(PrefixSecret) }
 
@@ -134,6 +138,9 @@ func NewSecretID() ID { return New(PrefixSecret) }
 
 // ParseEventTypeID parses a string and validates the "evtype" prefix.
 func ParseEventTypeID(s string) (ID, error) { return ParseWithPrefix(s, PrefixEventType) }
+
+// ParseAttemptID parses a string and validates the "att" prefix.
+func ParseAttemptID(s string) (ID, error) { return ParseWithPrefix(s, PrefixAttempt) }
 
 // ParseEndpointID parses a string and validates the "ep" prefix.
 func ParseEndpointID(s string) (ID, error) { return ParseWithPrefix(s, PrefixEndpoint) }
