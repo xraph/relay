@@ -259,16 +259,19 @@ rdb.Open(ctx, "redis://localhost:6379")
 kvStore, _ := kv.Open(rdb)
 
 store := redisstore.New(kvStore)
-store.Migrate(ctx) // builds the every-tenant endpoint index; see below
+// Builds the every-tenant endpoint index, and refuses a kv store that rewrites
+// keys. Don't ignore this error: it's the only place that refusal shows up.
+if err := store.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
 
 r, _ := relay.New(relay.WithStore(store))
 ```
 
-Don't give it a kv store with a namespace hook, or any hook that rewrites
-keys. Relay reads some keys through the raw client and the rest through kv,
-and needs both to mean the same key; under a namespace, deletes silently do
-nothing and replay can't find its records. `Migrate` checks for this and
-returns `ErrKVRewritesKeys`. Encryption and compression hooks are fine.
+Don't give it a kv store with a namespace hook. Relay reads some keys through
+the raw client and the rest through kv, and needs both to mean the same key.
+Under a namespace, deletes silently do nothing and replay can't find its
+records. `Migrate` checks for this and returns `ErrKVRewritesKeys`.
 
 ### MongoDB
 

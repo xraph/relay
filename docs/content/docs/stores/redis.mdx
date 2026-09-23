@@ -111,8 +111,7 @@ restart, or call `Migrate()`.
 
 ## Key-rewriting kv hooks are not supported
 
-Pass `redisstore.New` a kv store without a namespace hook, or any other hook
-that rewrites keys.
+Pass `redisstore.New` a kv store without a namespace hook.
 
 The store reads and writes some keys through the raw go-redis client (every
 sorted-set and set index, and the replay claim) and the rest through kv (the
@@ -126,16 +125,26 @@ and nothing errors. Instead:
 - two relays sharing one redis still collide on every index key, so the
   namespace does not isolate them anyway.
 
-`Migrate()` checks for this first. It writes a probe key through kv and looks
-for it through the raw client, and returns `ErrKVRewritesKeys` if it isn't
-there. The probe carries a one-minute TTL, so it cleans itself up even then.
+`Migrate()` checks for this before anything else and returns
+`ErrKVRewritesKeys` if it finds it. It probes both ways: a key written through
+kv has to be where the raw client expects it, and a key written through the raw
+client has to be readable through kv. That catches a namespace applied to reads
+only, to writes only, or to both.
 
-Hooks that leave keys alone are fine. `SetRaw` never passes its value through
-kv's hooks, so encryption and compression leave records exactly as relay wrote
-them. Both were checked against a real redis.
+It refuses only on proof. A failed refusal stops the app booting, so a probe
+that simply goes missing, which is what replication lag or eviction looks like
+behind a proxy that reads from replicas, is not treated as proof and passes.
+That makes the check best-effort. It can miss a rewrite in that situation, but
+it will not refuse a store that works.
 
-If you set `DisableMigrate`, this check does not run, so the store will not
-catch a namespaced kv store for you.
+It leaves no keys behind. The probes carry a one-minute TTL, so they clean up
+even in the case where nothing can delete them.
+
+Other hooks are not refused. Note that in grove kv v1.6.3 the encrypt and
+compress hooks do not change what gets stored: records, endpoint secrets
+included, are written in plain text whether or not you add them.
+
+If you set `DisableMigrate`, this check does not run.
 
 ## Internals
 

@@ -10,6 +10,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -57,33 +58,76 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return s.backfillEndpointAll(ctx)
 }
 
-// checkKeysAreRaw confirms that a key written through kv is the same key the
-// raw client sees, which the rest of this store depends on. It writes a probe
-// through kv and looks for it through the raw client.
+// checkKeysAreRaw confirms that kv and the raw client mean the same key by the
+// same name, which the rest of this store depends on. It probes both ways: a
+// key written through kv must be visible to the raw client, and a key written
+// through the raw client must be readable through kv.
 //
-// Only the key is compared, not the value: SetRaw never passes its value
-// through kv's hooks, so no hook can change it, and a byte comparison could
-// never fail.
+// It refuses only on positive evidence, never on a mere miss. This check stops
+// the app booting, so a false refusal is an outage. Behind a proxy that sends
+// reads to replicas, a miss can just be replication lag. So a miss is confirmed
+// through the other client first: rewriting shows up as one client seeing the
+// key and the other not, while lag or eviction shows up as neither seeing it,
+// which proves nothing and passes.
+//
+// Each direction catches a case the other misses. A hook rewriting keys on
+// reads only fails the read probe. A hook rewriting them on writes only fails
+// the write probe, and that is the case relay is most exposed to, because its
+// raw client reads records that kv wrote.
+//
+// Only keys are compared, not values. SetRaw never hands its value to kv's
+// hooks, so no hook can change it.
 func (s *Store) checkKeysAreRaw(ctx context.Context) error {
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return fmt.Errorf("relay/redis: probe nonce: %w", err)
 	}
-	probe := "relay:probe:raw:" + hex.EncodeToString(nonce[:])
+	tag := hex.EncodeToString(nonce[:])
 
-	// A TTL, so the probe cleans itself up in the one case where we cannot
-	// delete it: when keys are rewritten, neither client can name it.
-	if err := s.kv.SetRaw(ctx, probe, []byte("1"), kv.WithTTL(time.Minute)); err != nil {
+	// Write path: kv writes, the raw client deletes. DEL is a write, so it goes
+	// to the primary and cannot be fooled by a lagging replica, and it saves a
+	// separate EXISTS. The TTL covers the one case where the probe cannot be
+	// deleted: when keys are rewritten, the raw client cannot name it.
+	written := "relay:probe:write:" + tag
+	if err := s.kv.SetRaw(ctx, written, []byte("1"), kv.WithTTL(time.Minute)); err != nil {
 		return fmt.Errorf("relay/redis: write key probe: %w", err)
 	}
-	seen, err := s.rdb.Exists(ctx, probe).Result()
+	deleted, err := s.rdb.Del(ctx, written).Result()
 	if err != nil {
-		return fmt.Errorf("relay/redis: read key probe: %w", err)
+		return fmt.Errorf("relay/redis: delete key probe: %w", err)
 	}
-	if seen == 0 {
-		return ErrKVRewritesKeys
+	if deleted == 0 {
+		// The raw client found nothing to delete. Either the key was written
+		// under another name, or it is simply gone. Look for any key carrying
+		// the probe's unique nonce: finding one under a different name is
+		// proof of a rewrite, and finding none proves nothing. This only runs
+		// when something is already wrong, so a healthy boot never scans.
+		found, scanErr := s.keysMatching(ctx, "*"+written)
+		if scanErr != nil {
+			return fmt.Errorf("relay/redis: look for key probe: %w", scanErr)
+		}
+		for _, k := range found {
+			if k != written {
+				_ = s.rdb.Del(ctx, k).Err() //nolint:errcheck // best-effort: the probe expires on its own
+				return ErrKVRewritesKeys
+			}
+		}
 	}
-	_ = s.rdb.Del(ctx, probe).Err() //nolint:errcheck // best-effort: the probe expires on its own
+
+	// Read path: the raw client writes, kv reads. A hook scoped to reads alone
+	// leaves the write probe above untouched and fails only here.
+	read := "relay:probe:read:" + tag
+	if err := s.rdb.Set(ctx, read, "1", time.Minute).Err(); err != nil {
+		return fmt.Errorf("relay/redis: write read probe: %w", err)
+	}
+	defer func() { _ = s.rdb.Del(ctx, read).Err() }() //nolint:errcheck // best-effort: the probe expires on its own
+	if _, getErr := s.kv.GetRaw(ctx, read); getErr != nil {
+		// kv missed it. If the raw client can still see it, kv is reading a
+		// different key. If neither can, it is lag or eviction, not rewriting.
+		if seen, rawErr := s.rdb.Get(ctx, read).Result(); rawErr == nil && seen == "1" {
+			return ErrKVRewritesKeys
+		}
+	}
 	return nil
 }
 
@@ -93,11 +137,9 @@ func (s *Store) checkKeysAreRaw(ctx context.Context) error {
 // It builds from the per-tenant index keys, not the endpoint records. Each
 // relay:z:ep:tenant:* zset already holds its endpoints' ids scored by
 // created_at, which is everything the global index needs, so no record is
-// decoded. That matters three ways. A stray key under relay:ep:* cannot stop
-// the app booting, which it did when this decoded records. Index keys are
-// written and read through the raw client, so this stays consistent under a kv
-// namespace hook, where records are namespaced but indexes are not. And it is
-// one ZRANGE per tenant instead of one GET per endpoint.
+// decoded. That matters two ways. A stray key under relay:ep:* cannot stop the
+// app booting, which it did when this decoded records. And it is one ZRANGE
+// per tenant instead of one GET per endpoint.
 //
 // ZADD is idempotent, so a run that dies partway is safe to repeat; the
 // markers are written only after the scan completes. On a cluster it scans
@@ -160,6 +202,40 @@ func (s *Store) backfillEndpointAll(ctx context.Context) error {
 		return fmt.Errorf("relay/redis: record endpoint backfill: %w", err)
 	}
 	return nil
+}
+
+// keysMatching returns every key matching pattern. On a cluster it scans every
+// master, since a plain SCAN walks a single node.
+func (s *Store) keysMatching(ctx context.Context, pattern string) ([]string, error) {
+	var (
+		mu  sync.Mutex
+		out []string
+	)
+	scan := func(ctx context.Context, node goredis.UniversalClient) error {
+		var cursor uint64
+		for {
+			keys, next, err := node.Scan(ctx, cursor, pattern, 500).Result()
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			out = append(out, keys...)
+			mu.Unlock()
+			cursor = next
+			if cursor == 0 {
+				return nil
+			}
+		}
+	}
+	var err error
+	if cluster, ok := s.rdb.(*goredis.ClusterClient); ok {
+		err = cluster.ForEachMaster(ctx, func(ctx context.Context, node *goredis.Client) error {
+			return scan(ctx, node)
+		})
+	} else {
+		err = scan(ctx, s.rdb)
+	}
+	return out, err
 }
 
 // isWrongType reports whether err is redis refusing an operation because the
