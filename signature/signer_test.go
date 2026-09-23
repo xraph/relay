@@ -1,11 +1,7 @@
 package signature_test
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/xraph/relay/signature"
@@ -30,14 +26,15 @@ func TestSignKnownVector(t *testing.T) {
 
 	got := mustSign(t, signer, payload, secret, timestamp)
 
-	// Compute expected HMAC-SHA256 independently.
-	content := fmt.Sprintf("%d.%s", timestamp, payload)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(content))
-	expected := "v1=" + hex.EncodeToString(mac.Sum(nil))
+	// A literal, not a recomputation. Rebuilding the expectation with the
+	// same formula the implementation uses makes the two move together, so a
+	// change to the signed content format passes here and silently breaks
+	// every deployed receiver. This value is the contract.
+	const expected = "v1=54cc009a0beb0cf5740946b4b78d7b071dcb80552fb1e211546c391896780fe5"
 
 	if got != expected {
-		t.Errorf("Sign() = %q, want %q", got, expected)
+		t.Errorf("Sign() = %q, want %q. If you changed the signed content "+
+			"format, every deployed receiver stops verifying.", got, expected)
 	}
 }
 
@@ -145,14 +142,22 @@ func TestVerifyIsFalseForAnEmptySecret(t *testing.T) {
 	// change, measured by running it. Verify returned true for it.
 	payload := []byte(`{"a":1}`)
 	ts := int64(1750000000)
-	forged := "v1=2d66c5cfd147d2e05967af171d8a75826b6e92e028acaa80e206df7a527091d0"
+	// HMAC-SHA256 of "1750000000.{\"a\":1}" keyed with the empty string.
+	// This is what the old Sign returned for this exact payload, and what the
+	// old Verify accepted. Computed independently, not by calling Sign: a
+	// constant derived from the code under test cannot catch the code under
+	// test regressing.
+	forged := "v1=dbd4a33475f68e88faa5839a3b70ca63d45b3860d06fe440190cc57d8bd1c587"
 	if signature.Verify(payload, "", ts, forged) {
 		t.Fatal("Verify returned true for an empty secret")
 	}
 }
 
 func TestVerifyIsFalseForAWhitespaceSecret(t *testing.T) {
-	if signature.Verify([]byte(`{"a":1}`), "  ", 1750000000, "v1=anything") {
+	// Keyed with two spaces, over the same content. "v1=anything" would have
+	// been rejected by any implementation, so it tested nothing.
+	forged := "v1=a1e652ae20c70fa86686866f7ae91324bb6b517a8f6da48db9639c421ed39e39"
+	if signature.Verify([]byte(`{"a":1}`), "  ", 1750000000, forged) {
 		t.Fatal("Verify returned true for a whitespace secret")
 	}
 }

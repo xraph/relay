@@ -1,3 +1,4 @@
+// Package signature provides HMAC-SHA256 webhook signing and verification.
 package signature
 
 import (
