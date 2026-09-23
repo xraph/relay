@@ -77,7 +77,7 @@ func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, e
 
 		update := bson.M{
 			"$set": bson.M{
-				"state":      "delivering",
+				"state":      string(delivery.StateDelivering),
 				"updated_at": t,
 			},
 		}

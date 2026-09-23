@@ -171,7 +171,10 @@ func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, e
 			return nil, fmt.Errorf("relay/redis: dequeue get: %w", err)
 		}
 
-		m.State = string(delivery.StateDelivered) // temporarily mark as delivering
+		// Claimed, attempt in flight. This used to write "delivered", so a
+		// delivery showed as delivered from the moment a worker picked it
+		// up, whatever the receiver then said.
+		m.State = string(delivery.StateDelivering)
 		m.UpdatedAt = now()
 		if err := s.setEntity(ctx, key, &m); err != nil {
 			return nil, fmt.Errorf("relay/redis: dequeue update: %w", err)

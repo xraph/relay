@@ -14,6 +14,11 @@ const (
 	// StatePending indicates the delivery is awaiting attempt.
 	StatePending State = "pending"
 
+	// StateDelivering indicates a worker has claimed the delivery and its
+	// attempt is in flight. Persistent backends write it on Dequeue; the
+	// engine replaces it with one of the other three once the attempt ends.
+	StateDelivering State = "delivering"
+
 	// StateDelivered indicates the delivery was successfully sent.
 	StateDelivered State = "delivered"
 
