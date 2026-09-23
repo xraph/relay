@@ -6,6 +6,8 @@ package storetest
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -24,6 +26,19 @@ type ReplayBackend interface {
 	CountDLQ(ctx context.Context) (int64, error)
 	Enqueue(ctx context.Context, d *delivery.Delivery) error
 	GetDelivery(ctx context.Context, delID id.ID) (*delivery.Delivery, error)
+}
+
+// uniqueTenant returns a tenant id no other subtest uses. The suite runs
+// against real databases that one container shares across subtests, so every
+// assertion is scoped to rows this subtest created rather than relying on an
+// empty table.
+func uniqueTenant(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	return "tenant-" + hex.EncodeToString(b)
 }
 
 // NewEntry builds a DLQ entry suitable for the suite.
@@ -77,28 +92,35 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 	t.Run("a marked row still counts and still lists", func(t *testing.T) {
 		ctx := context.Background()
 		s := newStore(t)
-		e := NewEntry()
-		if err := s.Push(ctx, e); err != nil {
-			t.Fatalf("push: %v", err)
-		}
-		if err := s.MarkReplayed(ctx, e.ID, time.Now().UTC()); err != nil {
-			t.Fatalf("mark replayed: %v", err)
-		}
-
-		n, err := s.CountDLQ(ctx)
+		before, err := s.CountDLQ(ctx)
 		if err != nil {
-			t.Fatalf("count: %v", err)
+			t.Fatalf("count before: %v", err)
 		}
-		if n != 1 {
-			t.Fatalf("CountDLQ = %d, want 1: a replayed entry is still an entry", n)
+		e := NewEntry()
+		e.TenantID = uniqueTenant(t)
+		if pushErr := s.Push(ctx, e); pushErr != nil {
+			t.Fatalf("push: %v", pushErr)
+		}
+		if markErr := s.MarkReplayed(ctx, e.ID, time.Now().UTC()); markErr != nil {
+			t.Fatalf("mark replayed: %v", markErr)
 		}
 
-		list, err := s.ListDLQ(ctx, dlq.ListOpts{Limit: 10})
+		// A delta, not an absolute, so rows from other subtests cannot skew it.
+		after, err := s.CountDLQ(ctx)
+		if err != nil {
+			t.Fatalf("count after: %v", err)
+		}
+		if after != before+1 {
+			t.Fatalf("CountDLQ went %d -> %d, want +1: a replayed entry is still an entry",
+				before, after)
+		}
+
+		list, err := s.ListDLQ(ctx, dlq.ListOpts{Limit: 10, TenantID: e.TenantID})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
-		if len(list) != 1 {
-			t.Fatalf("ListDLQ returned %d entries, want 1", len(list))
+		if len(list) != 1 || list[0].ID != e.ID {
+			t.Fatalf("ListDLQ for its own tenant returned %d entries, want exactly this one", len(list))
 		}
 		if list[0].ReplayedAt == nil {
 			t.Fatal("ListDLQ dropped ReplayedAt on the way back out")
@@ -115,38 +137,38 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 		ctx := context.Background()
 		s := newStore(t)
 		a := NewEntry()
-		a.TenantID = "tenant-1"
+		a.TenantID = uniqueTenant(t)
 		b := NewEntry()
-		b.TenantID = "tenant-2"
+		b.TenantID = uniqueTenant(t)
 		for _, e := range []*dlq.Entry{a, b} {
 			if err := s.Push(ctx, e); err != nil {
 				t.Fatalf("push: %v", err)
 			}
 		}
 
-		got, err := s.ListDLQ(ctx, dlq.ListOpts{Limit: 10, TenantID: ""})
+		// Large enough to include rows other subtests left in a shared
+		// database. The question is only whether both of ours come back.
+		got, err := s.ListDLQ(ctx, dlq.ListOpts{Limit: 10000, TenantID: ""})
 		if err != nil {
 			t.Fatalf("list: %v", err)
-		}
-		// An empty tenant filter means "every tenant" on every backend that
-		// has been checked. If a backend returns zero here it is treating
-		// empty as a literal match, which makes a page that forgot to send
-		// a tenant id look perfectly correct.
-		if len(got) != 2 {
-			t.Fatalf("an empty TenantID returned %d of 2 entries. If this "+
-				"backend intends empty to mean 'no tenant', say so here and "+
-				"raise it: the backends disagree and callers cannot tell",
-				len(got))
 		}
 		ids := map[string]bool{}
 		for _, e := range got {
 			ids[e.ID.String()] = true
 		}
-		// Identity, not count. A count assertion passes when the wrong rows
-		// come back in the right quantity.
+		// An empty tenant filter means "every tenant" on every backend checked
+		// so far. A backend treating empty as a literal match would return
+		// neither of these, since neither has an empty tenant. Asserting on
+		// identity rather than a total is what lets this run against a shared
+		// database, and it discriminates the two behaviours just as sharply.
+		//
+		// Note that ListEndpoints does the opposite and matches literally on
+		// all five backends. The two list methods disagree with each other.
 		if !ids[a.ID.String()] || !ids[b.ID.String()] {
-			t.Fatalf("an empty TenantID returned two entries but not the two "+
-				"that were pushed: got %v", ids)
+			t.Fatalf("an empty TenantID did not return both entries from two "+
+				"different tenants (got a=%v b=%v). If this backend treats empty "+
+				"as a literal match, the backends disagree and callers cannot tell",
+				ids[a.ID.String()], ids[b.ID.String()])
 		}
 	})
 
@@ -154,24 +176,24 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 		ctx := context.Background()
 		s := newStore(t)
 		mine := NewEntry()
-		mine.TenantID = "tenant-1"
+		mine.TenantID = uniqueTenant(t)
 		theirs := NewEntry()
-		theirs.TenantID = "tenant-2"
+		theirs.TenantID = uniqueTenant(t)
 		for _, e := range []*dlq.Entry{mine, theirs} {
 			if err := s.Push(ctx, e); err != nil {
 				t.Fatalf("push: %v", err)
 			}
 		}
 
-		got, err := s.ListDLQ(ctx, dlq.ListOpts{Limit: 10, TenantID: "tenant-1"})
+		got, err := s.ListDLQ(ctx, dlq.ListOpts{Limit: 10, TenantID: mine.TenantID})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(got) != 1 {
-			t.Fatalf("got %d entries for tenant-1, want 1", len(got))
+			t.Fatalf("got %d entries for one tenant, want 1", len(got))
 		}
 		if got[0].ID != mine.ID {
-			t.Fatalf("tenant-1's filter returned tenant-2's entry: %s", got[0].ID)
+			t.Fatalf("one tenant's filter returned another tenant's entry: %s", got[0].ID)
 		}
 	})
 

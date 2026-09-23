@@ -567,6 +567,23 @@ func (s *Store) GetDLQ(_ context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	return e, nil
 }
 
+// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
+// the DLQ is a log, and a marked row is what lets the service refuse a second
+// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
+// when the entry does not exist.
+func (s *Store) MarkReplayed(_ context.Context, dlqID id.ID, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.dlqEntries[dlqID.String()]
+	if !ok {
+		return relay.ErrDLQNotFound
+	}
+	t := at.UTC()
+	e.ReplayedAt = &t
+	return nil
+}
+
 // Replay marks a DLQ entry for redelivery and re-enqueues the delivery.
 func (s *Store) Replay(_ context.Context, dlqID id.ID) error {
 	s.mu.Lock()

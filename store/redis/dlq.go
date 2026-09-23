@@ -168,6 +168,27 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	return fromDLQEntryModel(&m)
 }
 
+// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
+// the DLQ is a log, and a marked row is what lets the service refuse a second
+// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
+// when the entry does not exist.
+//
+// The row stays in every sorted set it is already in, so no index needs
+// maintaining: only the entity's ReplayedAt changes.
+func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error {
+	key := entityKey(prefixDLQ, dlqID.String())
+	var m dlqEntryModel
+	if err := s.getEntity(ctx, key, &m); err != nil {
+		if isNotFound(err) {
+			return relay.ErrDLQNotFound
+		}
+		return err
+	}
+	t := at.UTC()
+	m.ReplayedAt = &t
+	return s.setEntity(ctx, key, &m)
+}
+
 func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
 	entry, err := s.GetDLQ(ctx, dlqID)
 	if err != nil {

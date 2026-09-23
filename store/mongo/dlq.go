@@ -101,6 +101,28 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 }
 
 // Replay marks a DLQ entry for redelivery (re-enqueues the delivery).
+// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
+// the DLQ is a log, and a marked row is what lets the service refuse a second
+// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
+// when the entry does not exist.
+//
+// MatchedCount, not ModifiedCount: re-marking a row with an identical
+// timestamp modifies nothing, but the row exists and must not read as missing.
+func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error {
+	res, err := s.mdb.NewUpdate((*dlqEntryModel)(nil)).
+		Filter(bson.M{"_id": dlqID.String()}).
+		Set("replayed_at", at.UTC()).
+		Set("updated_at", now()).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("relay/mongo: mark replayed: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return relay.ErrDLQNotFound
+	}
+	return nil
+}
+
 func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
 	entry, err := s.GetDLQ(ctx, dlqID)
 	if err != nil {
