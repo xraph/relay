@@ -223,6 +223,51 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return fmt.Errorf("relay/redis: mark replayed: still contended after %d attempts", attempts)
 }
 
+// ReleaseReplay undoes a claim made by MarkReplayed, clearing replayed_at so
+// the entry can be replayed again. The service calls it when the send it
+// claimed the entry for fails, so a failure never leaves an entry marked as
+// sent when nothing went out. Only the claim holder calls it. Returns
+// relay.ErrDLQNotFound when the entry does not exist.
+//
+// Under WATCH for the same reason as the claim: a plain read then write would
+// restore a row that a Purge deleted in between.
+func (s *Store) ReleaseReplay(ctx context.Context, dlqID id.ID) error {
+	key := entityKey(prefixDLQ, dlqID.String())
+	release := func(tx *goredis.Tx) error {
+		raw, err := tx.Get(ctx, key).Bytes()
+		if errors.Is(err, goredis.Nil) {
+			return relay.ErrDLQNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var m dlqEntryModel
+		if decodeErr := json.Unmarshal(raw, &m); decodeErr != nil {
+			return fmt.Errorf("relay/redis: decode dlq entry: %w", decodeErr)
+		}
+		m.ReplayedAt = nil
+		out, err := json.Marshal(&m)
+		if err != nil {
+			return fmt.Errorf("relay/redis: encode dlq entry: %w", err)
+		}
+		_, err = tx.TxPipelined(ctx, func(p goredis.Pipeliner) error {
+			p.Set(ctx, key, out, 0) // no expiry, exactly as setEntity writes it
+			return nil
+		})
+		return err
+	}
+
+	const attempts = 16
+	for i := 0; i < attempts; i++ {
+		err := s.rdb.Watch(ctx, release, key)
+		if errors.Is(err, goredis.TxFailedErr) {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("relay/redis: release replay: still contended after %d attempts", attempts)
+}
+
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
 	maxScore := scoreFromTime(before)
 	ids, err := s.zRangeByScoreIDs(ctx, zDLQAll, math.Inf(-1), maxScore)

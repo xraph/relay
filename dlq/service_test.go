@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -437,5 +439,182 @@ func TestReplayBulkTwiceSendsNothingTheSecondTime(t *testing.T) {
 	}
 	if got := len(store.AllDeliveries()); got != 2 {
 		t.Fatalf("got %d deliveries, want 2: a second bulk must not re-send", got)
+	}
+}
+
+// failingEnqueuer refuses every delivery, standing in for a store that cannot
+// accept the redelivery.
+type failingEnqueuer struct{ err error }
+
+func (f failingEnqueuer) Enqueue(context.Context, *delivery.Delivery) error { return f.err }
+
+// The race the claim exists to close. Before it, several concurrent replays of
+// one entry all passed the "not yet replayed" check, all enqueued, and all
+// reported success: postgres double-sent 40 times in 40.
+func TestReplayConcurrentSendsOnce(t *testing.T) {
+	svc, store := newService()
+	e := seedEntry(t, store)
+
+	const n = 16
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+		errs  = make([]error, n)
+	)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = svc.Replay(ctx(), e.ID)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	won := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, relay.ErrAlreadyReplayed):
+		default:
+			t.Errorf("replay %d: unexpected error %v", i, err)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d of %d concurrent replays reported success, want exactly 1", won, n)
+	}
+	if got := len(store.AllDeliveries()); got != 1 {
+		t.Fatalf("%d deliveries enqueued, want 1: every extra one is a duplicate webhook", got)
+	}
+}
+
+// Two operators bulk-replaying the same window at once must send each entry
+// once between them. Before, 200 entries produced 255 deliveries.
+func TestReplayBulkConcurrentSendsOncePerEntry(t *testing.T) {
+	svc, store := newService()
+	const entries = 50
+	for i := 0; i < entries; i++ {
+		seedEntry(t, store)
+	}
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := time.Now().UTC()
+
+	var (
+		wg     sync.WaitGroup
+		start  = make(chan struct{})
+		counts [2]int64
+		errs   [2]error
+	)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			counts[i], errs[i] = svc.ReplayBulk(ctx(), from, to)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("bulk %d: %v", i, err)
+		}
+	}
+	if got := len(store.AllDeliveries()); got != entries {
+		t.Fatalf("%d deliveries for %d entries, want exactly one each", got, entries)
+	}
+	if counts[0]+counts[1] != entries {
+		t.Fatalf("the two bulks reported %d + %d = %d replayed, want %d between them",
+			counts[0], counts[1], counts[0]+counts[1], entries)
+	}
+}
+
+// Guard for the ordering. It passes before and after the claim moves in front
+// of the send, and it is here so that move cannot silently change what a
+// failed send leaves behind: nothing enqueued, the entry unclaimed, and a
+// later replay free to try again.
+func TestReplayReleasesTheClaimWhenEnqueueFails(t *testing.T) {
+	store := memory.New()
+	boom := errors.New("queue unavailable")
+	svc := dlq.NewService(store, failingEnqueuer{err: boom}, dlq.Config{MaxAttempts: 5}, nil)
+	e := seedEntry(t, store)
+
+	err := svc.Replay(ctx(), e.ID)
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want the enqueue failure", err)
+	}
+	if n := len(store.AllDeliveries()); n != 0 {
+		t.Fatalf("%d deliveries after a failed enqueue, want 0", n)
+	}
+	got, getErr := store.GetDLQ(ctx(), e.ID)
+	if getErr != nil {
+		t.Fatalf("get: %v", getErr)
+	}
+	if got.ReplayedAt != nil {
+		t.Fatal("the entry is still marked replayed after its send failed: " +
+			"nothing was sent, and it can never be replayed now")
+	}
+
+	// And it really is free: a working service replays it.
+	ok := dlq.NewService(store, store, dlq.Config{MaxAttempts: 5}, nil)
+	if err := ok.Replay(ctx(), e.ID); err != nil {
+		t.Fatalf("replay after a failed attempt: %v", err)
+	}
+	if n := len(store.AllDeliveries()); n != 1 {
+		t.Fatalf("%d deliveries, want 1", n)
+	}
+}
+
+// With the claim first, a bulk that hits a failing send must not count it.
+// Before, n came back 0 while a delivery had in fact been queued.
+func TestReplayBulkCountsOnlyWhatWasSent(t *testing.T) {
+	store := memory.New()
+	boom := errors.New("queue unavailable")
+	svc := dlq.NewService(store, failingEnqueuer{err: boom}, dlq.Config{MaxAttempts: 5}, nil)
+	seedEntry(t, store)
+
+	n, err := svc.ReplayBulk(ctx(), time.Now().UTC().Add(-24*time.Hour), time.Now().UTC())
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want the enqueue failure", err)
+	}
+	if n != 0 {
+		t.Fatalf("n = %d, want 0: nothing was sent", n)
+	}
+	if got := len(store.AllDeliveries()); got != 0 {
+		t.Fatalf("%d deliveries queued, want 0", got)
+	}
+}
+
+// unreleasableStore is a memory store whose ReleaseReplay always fails.
+type unreleasableStore struct {
+	*memory.Store
+	err error
+}
+
+func (u unreleasableStore) ReleaseReplay(context.Context, id.ID) error { return u.err }
+
+// The one way the claim-first order can lose a redelivery: the send fails and
+// then the release fails as well. The entry is left marked with nothing sent,
+// so the caller must hear about both failures, not only the first.
+func TestReplayReportsBothErrorsWhenReleaseAlsoFails(t *testing.T) {
+	mem := memory.New()
+	sendErr := errors.New("queue unavailable")
+	relErr := errors.New("store unavailable")
+	svc := dlq.NewService(unreleasableStore{Store: mem, err: relErr},
+		failingEnqueuer{err: sendErr}, dlq.Config{MaxAttempts: 5}, nil)
+	e := seedEntry(t, mem)
+
+	err := svc.Replay(ctx(), e.ID)
+	if !errors.Is(err, sendErr) {
+		t.Errorf("error does not carry the send failure: %v", err)
+	}
+	if !errors.Is(err, relErr) {
+		t.Errorf("error does not carry the release failure: %v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "nothing was sent") {
+		t.Errorf("error does not say the entry is marked with nothing sent: %v", err)
 	}
 }

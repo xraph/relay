@@ -27,6 +27,7 @@ type ReplayBackend interface {
 	GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error)
 	ListDLQ(ctx context.Context, opts dlq.ListOpts) ([]*dlq.Entry, error)
 	MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error
+	ReleaseReplay(ctx context.Context, dlqID id.ID) error
 	CountDLQ(ctx context.Context) (int64, error)
 	Enqueue(ctx context.Context, d *delivery.Delivery) error
 	GetDelivery(ctx context.Context, delID id.ID) (*delivery.Delivery, error)
@@ -324,6 +325,42 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 		if won != 1 {
 			t.Fatalf("%d of %d concurrent claims won, want exactly 1: every "+
 				"winner sends the webhook", won, n)
+		}
+	})
+
+	// A failed send releases its claim; the entry must then be claimable
+	// again, or a transient failure would strand it forever.
+	t.Run("ReleaseReplay makes an entry claimable again", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		e := NewEntry()
+		e.TenantID = uniqueTenant(t)
+		if err := s.Push(ctx, e); err != nil {
+			t.Fatalf("push: %v", err)
+		}
+		if err := s.MarkReplayed(ctx, e.ID, time.Now().UTC()); err != nil {
+			t.Fatalf("claim: %v", err)
+		}
+		if err := s.ReleaseReplay(ctx, e.ID); err != nil {
+			t.Fatalf("release: %v", err)
+		}
+		got, err := s.GetDLQ(ctx, e.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.ReplayedAt != nil {
+			t.Fatalf("ReplayedAt = %v after release, want nil", got.ReplayedAt)
+		}
+		if err := s.MarkReplayed(ctx, e.ID, time.Now().UTC()); err != nil {
+			t.Fatalf("re-claim after release: %v", err)
+		}
+	})
+
+	t.Run("ReleaseReplay on a missing row reports not found", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		if err := s.ReleaseReplay(ctx, id.NewDLQID()); !errors.Is(err, relay.ErrDLQNotFound) {
+			t.Fatalf("error = %v, want ErrDLQNotFound", err)
 		}
 	})
 

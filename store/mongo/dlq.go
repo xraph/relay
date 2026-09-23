@@ -127,6 +127,26 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return relay.ErrAlreadyReplayed
 }
 
+// ReleaseReplay undoes a claim made by MarkReplayed, clearing replayed_at so
+// the entry can be replayed again. The service calls it when the send it
+// claimed the entry for fails, so a failure never leaves an entry marked as
+// sent when nothing went out. Only the claim holder calls it. Returns
+// relay.ErrDLQNotFound when the entry does not exist.
+func (s *Store) ReleaseReplay(ctx context.Context, dlqID id.ID) error {
+	res, err := s.mdb.NewUpdate((*dlqEntryModel)(nil)).
+		Filter(bson.M{"_id": dlqID.String()}).
+		Set("replayed_at", nil).
+		Set("updated_at", now()).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("relay/mongo: release replay: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return relay.ErrDLQNotFound
+	}
+	return nil
+}
+
 // Purge deletes DLQ entries older than a threshold.
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.mdb.NewDelete((*dlqEntryModel)(nil)).

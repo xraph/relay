@@ -107,8 +107,10 @@ func (svc *Service) Get(ctx context.Context, dlqID id.ID) (*Entry, error) {
 // Replay re-enqueues a single DLQ entry for redelivery.
 //
 // This is a destructive read: it sends a real webhook to a real receiver,
-// which cannot tell it apart from the original. An entry that has already
-// been replayed is refused rather than sent twice.
+// which cannot tell it apart from the original. Each entry is sent at most
+// once, however many callers race for it: the entry is claimed atomically
+// before anything is sent, and every caller that loses the claim gets
+// ErrAlreadyReplayed having sent nothing.
 //
 // The replayed delivery takes its retry budget from config. The per-backend
 // Replay this replaced left MaxAttempts at 0 on postgres, sqlite and redis,
@@ -118,11 +120,24 @@ func (svc *Service) Replay(ctx context.Context, dlqID id.ID) error {
 	if err != nil {
 		return err
 	}
-	if entry.ReplayedAt != nil {
-		return ErrAlreadyReplayed
+	return svc.replayEntry(ctx, entry)
+}
+
+// replayEntry claims entry, then sends it. The order is the whole point.
+//
+// Claiming first means two callers can never both send: the store lets
+// exactly one claim through. The cost is that a send can fail after its claim
+// succeeded, so a failed send releases the claim, leaving the entry exactly as
+// replayable as before. If the release fails too, the entry stays claimed with
+// nothing sent; the caller gets both errors and can clear it by hand. That
+// takes two failures in a row, which is far rarer than two operators pressing
+// replay at the same time.
+func (svc *Service) replayEntry(ctx context.Context, entry *Entry) error {
+	now := time.Now().UTC()
+	if err := svc.store.MarkReplayed(ctx, entry.ID, now); err != nil {
+		return err
 	}
 
-	now := time.Now().UTC()
 	d := &delivery.Delivery{
 		Entity:        entity.New(),
 		ID:            id.NewDeliveryID(),
@@ -134,15 +149,13 @@ func (svc *Service) Replay(ctx context.Context, dlqID id.ID) error {
 		NextAttemptAt: now,
 	}
 	if err := svc.enq.Enqueue(ctx, d); err != nil {
-		return fmt.Errorf("dlq: replay enqueue: %w", err)
-	}
-
-	// Marking after the enqueue means a failure here leaves the entry
-	// unmarked and replayable. That risks one duplicate delivery if the
-	// operator retries, which is the safer direction: marking first and then
-	// failing the enqueue would lose the redelivery with nothing to show it.
-	if err := svc.store.MarkReplayed(ctx, dlqID, now); err != nil {
-		return fmt.Errorf("dlq: mark replayed: %w", err)
+		enqErr := fmt.Errorf("dlq: replay enqueue: %w", err)
+		if relErr := svc.store.ReleaseReplay(ctx, entry.ID); relErr != nil {
+			return errors.Join(enqErr, fmt.Errorf(
+				"dlq: release claim on %s after a failed send (it is marked "+
+					"replayed but nothing was sent): %w", entry.ID, relErr))
+		}
+		return enqErr
 	}
 	return nil
 }
@@ -169,8 +182,11 @@ func (svc *Service) ReplayBulk(ctx context.Context, from, to time.Time) (int64, 
 		if e.ReplayedAt != nil {
 			continue
 		}
-		if err := svc.Replay(ctx, e.ID); err != nil {
-			// Another caller replayed it between the list and now. Not a
+		// The listed entry already carries what replayEntry needs, so this
+		// skips the extra read Replay would make. ReplayedAt was checked above
+		// only as a shortcut; the claim inside replayEntry is what decides.
+		if err := svc.replayEntry(ctx, e); err != nil {
+			// Another caller claimed it between the list and now. Not a
 			// failure: it was sent once, which is the point.
 			if errors.Is(err, ErrAlreadyReplayed) {
 				continue

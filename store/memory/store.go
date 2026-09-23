@@ -544,7 +544,8 @@ func (s *Store) ListDLQ(_ context.Context, opts dlq.ListOpts) ([]*dlq.Entry, err
 		if opts.To != nil && e.FailedAt.After(*opts.To) {
 			continue
 		}
-		result = append(result, e)
+		cp := *e // a copy: see GetDLQ
+		result = append(result, &cp)
 	}
 
 	sort.Slice(result, func(i, j int) bool {
@@ -564,7 +565,11 @@ func (s *Store) GetDLQ(_ context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	if !ok {
 		return nil, relay.ErrDLQNotFound
 	}
-	return e, nil
+	// A copy, not the stored entry. Handing out the internal pointer let a
+	// caller read ReplayedAt while MarkReplayed wrote it under the lock, which
+	// the race detector flags; every other backend returns a fresh value.
+	cp := *e
+	return &cp, nil
 }
 
 // AllDeliveries returns every delivery currently held. Test support: the
@@ -598,6 +603,23 @@ func (s *Store) MarkReplayed(_ context.Context, dlqID id.ID, at time.Time) error
 	}
 	t := at.UTC()
 	e.ReplayedAt = &t
+	return nil
+}
+
+// ReleaseReplay undoes a claim made by MarkReplayed, clearing replayed_at so
+// the entry can be replayed again. The service calls it when the send it
+// claimed the entry for fails, so a failure never leaves an entry marked as
+// sent when nothing went out. Only the claim holder calls it. Returns
+// relay.ErrDLQNotFound when the entry does not exist.
+func (s *Store) ReleaseReplay(_ context.Context, dlqID id.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.dlqEntries[dlqID.String()]
+	if !ok {
+		return relay.ErrDLQNotFound
+	}
+	e.ReplayedAt = nil
 	return nil
 }
 

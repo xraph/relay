@@ -643,6 +643,30 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return relay.ErrAlreadyReplayed
 }
 
+// ReleaseReplay undoes a claim made by MarkReplayed, clearing replayed_at so
+// the entry can be replayed again. The service calls it when the send it
+// claimed the entry for fails, so a failure never leaves an entry marked as
+// sent when nothing went out. Only the claim holder calls it. Returns
+// relay.ErrDLQNotFound when the entry does not exist.
+func (s *Store) ReleaseReplay(ctx context.Context, dlqID id.ID) error {
+	res, err := s.sdb.NewUpdate((*dlqEntryModel)(nil)).
+		Set("replayed_at = NULL").
+		Set("updated_at = ?", now()).
+		Where("id = ?", dlqID.String()).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return relay.ErrDLQNotFound
+	}
+	return nil
+}
+
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.sdb.NewDelete((*dlqEntryModel)(nil)).
 		Where("failed_at < ?", before).

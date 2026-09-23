@@ -26,6 +26,11 @@ type Store interface {
 	// place that can see the configured retry budget.
 	MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error
 
+	// ReleaseReplay clears a claim made by MarkReplayed, so the entry can be
+	// replayed again. Used when the send the entry was claimed for fails.
+	// Returns relay.ErrDLQNotFound when the entry does not exist.
+	ReleaseReplay(ctx context.Context, dlqID id.ID) error
+
 	// Purge deletes DLQ entries older than a threshold.
 	Purge(ctx context.Context, before time.Time) (int64, error)
 
