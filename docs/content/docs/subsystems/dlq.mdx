@@ -41,8 +41,17 @@ attempt. The DLQ entry is marked with a `ReplayedAt` timestamp and stays where
 it is.
 
 Replay sends a real webhook to a real receiver, and the receiver can't tell it
-apart from the original. So you can only replay an entry once. A second call
-returns `ErrAlreadyReplayed` and enqueues nothing.
+apart from the original. So you can only replay an entry once, and that holds
+when several callers try at the same moment, not just one after another. The
+entry is claimed atomically before anything is sent. Exactly one caller wins
+the claim and sends; every other caller gets `ErrAlreadyReplayed` having sent
+nothing. Over the admin API that's a `409`.
+
+If the send fails after the claim, the claim is released and the entry is as
+replayable as it was before, so you can simply try again. The one case that
+needs a person: the send fails and releasing the claim fails too. Then the
+entry is marked replayed with nothing sent, and the error you get back names
+both failures and says so.
 
 ## Replayed entries stay in the queue
 
@@ -51,8 +60,8 @@ The dead letter queue is a record of what failed, not a worklist that empties
 as you go, so `CountDLQ` counts replayed entries too.
 
 If you alert on DLQ depth, that number stops falling once somebody starts
-working through the queue. Alert on the entries that haven't been replayed
-yet.
+working through the queue. There's no count of un-replayed entries yet, so
+for now the thing to watch is how fast depth grows, not its level.
 
 ## Bulk replay
 
