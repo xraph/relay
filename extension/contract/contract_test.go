@@ -44,20 +44,33 @@ func newHarness(t *testing.T) *harness {
 	return &harness{t: t, disp: disp, r: r, store: store}
 }
 
-func (h *harness) call(kind contract.Kind, intent string, payload any) (map[string]any, error) {
+// call sends input the way the React client does: a query carries it in
+// Params, a command in Payload. The dispatcher decodes both, but through
+// different paths (Params is a map marshalled back to JSON), and a test that
+// only ever used Payload would never exercise the one every query takes.
+func (h *harness) call(kind contract.Kind, intent string, input any) (map[string]any, error) {
 	h.t.Helper()
-	raw, err := json.Marshal(payload)
+	raw, err := json.Marshal(input)
 	if err != nil {
-		h.t.Fatalf("marshal payload: %v", err)
+		h.t.Fatalf("marshal input: %v", err)
 	}
-	out, _, err := h.disp.Dispatch(context.Background(), contract.Request{
+	req := contract.Request{
 		Envelope:      "v1",
 		Kind:          kind,
 		Contributor:   relaycontract.ContributorName,
 		Intent:        intent,
 		IntentVersion: 1,
-		Payload:       raw,
-	}, contract.Principal{})
+	}
+	if kind == contract.KindQuery {
+		var params map[string]any
+		if uerr := json.Unmarshal(raw, &params); uerr != nil {
+			h.t.Fatalf("query input must be a JSON object: %v", uerr)
+		}
+		req.Params = params
+	} else {
+		req.Payload = raw
+	}
+	out, _, err := h.disp.Dispatch(context.Background(), req, contract.Principal{})
 	if err != nil {
 		return nil, err
 	}
