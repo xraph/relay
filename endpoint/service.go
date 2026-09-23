@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"net/url"
+	"strings"
 
 	log "github.com/xraph/go-utils/log"
 
@@ -122,6 +123,34 @@ func (svc *Service) List(ctx context.Context, tenantID string, opts ListOpts) ([
 // SetEnabled enables or disables an endpoint.
 func (svc *Service) SetEnabled(ctx context.Context, epID id.ID, enabled bool) error {
 	return svc.store.SetEnabled(ctx, epID, enabled)
+}
+
+// ListUnsigned returns endpoints that have no signing secret. Deliveries to
+// these fail rather than being sent, because a signature derived from an
+// empty key verifies against that same empty key and so looks authentic to a
+// receiver doing everything right.
+//
+// This exists to be run before upgrading: it names what the signing change
+// will start failing. Create has always generated a secret when none is
+// supplied, so an endpoint can only reach this state through the store
+// interface directly.
+//
+// tenantID is required and is matched literally. There is no way to scan
+// every tenant: ListEndpoints compares tenant_id for equality on all five
+// backends, so passing "" returns only endpoints whose tenant is the empty
+// string. Audit one tenant at a time.
+func (svc *Service) ListUnsigned(ctx context.Context, tenantID string) ([]*Endpoint, error) {
+	eps, err := svc.store.ListEndpoints(ctx, tenantID, ListOpts{Limit: 10000})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Endpoint, 0)
+	for _, ep := range eps {
+		if strings.TrimSpace(ep.Secret) == "" {
+			out = append(out, ep)
+		}
+	}
+	return out, nil
 }
 
 // RotateSecret generates a new signing secret for an endpoint.

@@ -194,3 +194,129 @@ func TestEndpointServiceRotateSecretNotFound(t *testing.T) {
 		t.Fatalf("expected ErrEndpointNotFound, got %v", err)
 	}
 }
+
+// ListUnsigned exists so an operator can find endpoints that will start
+// failing before the signing change reaches them. An endpoint can only reach
+// this state through the store directly, since Create always generates a
+// secret, but the store interface is public and relay's own dashboard already
+// reaches past the service to it.
+func TestListUnsignedFindsEndpointsWithNoSecret(t *testing.T) {
+	store := memory.New()
+	svc := endpoint.NewService(store, nil)
+
+	signed, err := svc.Create(ctx(), endpoint.Input{
+		TenantID:   "t1",
+		URL:        "https://a.example/hook",
+		EventTypes: []string{"invoice.*"},
+	})
+	if err != nil {
+		t.Fatalf("create signed: %v", err)
+	}
+
+	unsigned := &endpoint.Endpoint{
+		ID:         id.NewEndpointID(),
+		TenantID:   "t1",
+		URL:        "https://b.example/hook",
+		EventTypes: []string{"invoice.*"},
+		Secret:     "",
+		Enabled:    true,
+	}
+	if err := store.CreateEndpoint(ctx(), unsigned); err != nil {
+		t.Fatalf("create unsigned: %v", err)
+	}
+
+	got, err := svc.ListUnsigned(ctx(), "t1")
+	if err != nil {
+		t.Fatalf("list unsigned: %v", err)
+	}
+	// Assert on identity, not on count. A count assertion passes when the
+	// wrong rows come back in the right quantity.
+	if len(got) != 1 {
+		t.Fatalf("got %d unsigned endpoints, want 1", len(got))
+	}
+	if got[0].ID != unsigned.ID {
+		t.Fatalf("found %s, want the unsigned endpoint %s (the signed one is %s)",
+			got[0].ID, unsigned.ID, signed.ID)
+	}
+}
+
+func TestListUnsignedTreatsWhitespaceAsAbsent(t *testing.T) {
+	store := memory.New()
+	svc := endpoint.NewService(store, nil)
+
+	blank := &endpoint.Endpoint{
+		ID:         id.NewEndpointID(),
+		TenantID:   "t1",
+		URL:        "https://c.example/hook",
+		EventTypes: []string{"*"},
+		Secret:     "   ",
+		Enabled:    true,
+	}
+	if err := store.CreateEndpoint(ctx(), blank); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.ListUnsigned(ctx(), "t1")
+	if err != nil {
+		t.Fatalf("list unsigned: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != blank.ID {
+		t.Fatalf("a whitespace secret was not reported as unsigned: got %d rows", len(got))
+	}
+}
+
+func TestListUnsignedIsEmptyWhenEveryEndpointIsSigned(t *testing.T) {
+	svc := newService()
+	if _, err := svc.Create(ctx(), endpoint.Input{
+		TenantID:   "t1",
+		URL:        "https://a.example/hook",
+		EventTypes: []string{"*"},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.ListUnsigned(ctx(), "t1")
+	if err != nil {
+		t.Fatalf("list unsigned: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d unsigned endpoints, want 0", len(got))
+	}
+}
+
+// Pins a behaviour every backend shares and one caller has wrong.
+//
+// ListEndpoints matches tenant_id literally: postgres and sqlite issue
+// `WHERE tenant_id = ?`, mongo filters on the same field, redis reads a
+// per-tenant sorted set, and memory compares with !=. So an empty tenantID
+// returns only endpoints whose tenant is the empty string, never every
+// tenant. dashboard/data.go's fetchAllEndpoints passes "" with the comment
+// "returns all endpoints across all tenants", which is why the templ
+// dashboard's endpoint count, endpoints page, deliveries page and both
+// widgets render empty.
+//
+// Recorded rather than fixed here: making empty mean "all" is a semantic
+// change to a core method across five backends and belongs in its own
+// change, not in a signing fix.
+func TestListEndpointsTreatsAnEmptyTenantLiterally(t *testing.T) {
+	store := memory.New()
+	svc := endpoint.NewService(store, nil)
+
+	if _, err := svc.Create(ctx(), endpoint.Input{
+		TenantID:   "t1",
+		URL:        "https://a.example/hook",
+		EventTypes: []string{"*"},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := store.ListEndpoints(ctx(), "", endpoint.ListOpts{Limit: 100})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("an empty tenant returned %d endpoints. If this backend now "+
+			"means 'every tenant', the backends disagree and callers cannot "+
+			"tell which they are talking to", len(got))
+	}
+}
