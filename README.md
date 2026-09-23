@@ -126,6 +126,37 @@ Every delivery includes these headers:
 | `X-Relay-Event-ID` | The event's TypeID (e.g. `evt_01h6rz...`) |
 | `Content-Type` | `application/json` |
 
+### Endpoints must have a signing secret
+
+Relay refuses to sign with an empty secret, and refuses to deliver to an
+endpoint that has one.
+
+Before this, an endpoint with no secret still received deliveries carrying a
+well-formed `X-Relay-Signature`, computed with the empty string as the key.
+That signature verified against the same empty key, so a receiver calling
+`signature.Verify` correctly still accepted it, and anybody who knew the
+payload and the timestamp could reproduce it. Nothing in the header
+distinguished it from a real one.
+
+`Endpoints().Create` has always generated a secret when you do not supply one,
+so an endpoint reaches this state only through the store interface directly.
+To find out whether you have any, run this per tenant before upgrading:
+
+```go
+unsigned, err := r.Endpoints().ListUnsigned(ctx, "acme")
+```
+
+It matches the tenant literally and there is no way to scan every tenant, so
+you need the list of tenants you use. Rotate a secret onto whatever it returns
+with `Endpoints().RotateSecret`.
+
+Deliveries to an endpoint with no secret now fail with `endpoint has no
+signing secret` and land in the dead letter queue. They burn the whole retry
+schedule getting there, because a missing secret reads as a network-class
+failure to the retrier and a network-class failure is worth retrying. A
+missing secret is not, so those retries are wasted. The DLQ entry names the
+cause, which is what matters when you are working out why an endpoint stopped.
+
 ## Admin API
 
 Mount the admin HTTP handler to manage webhooks at runtime:
