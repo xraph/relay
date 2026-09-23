@@ -64,3 +64,10 @@ func TestEngineConformance(t *testing.T) {
 		return openSqliteStore(t)
 	})
 }
+
+func TestDeliveryConformance(t *testing.T) {
+	storetest.RunDeliverySuite(t, func(t *testing.T) storetest.DeliveryBackend {
+		t.Helper()
+		return openSqliteStore(t)
+	})
+}

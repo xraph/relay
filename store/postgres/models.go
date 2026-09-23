@@ -214,6 +214,8 @@ type deliveryModel struct {
 	ID             string     `grove:"id,pk"`
 	EventID        string     `grove:"event_id"`
 	EndpointID     string     `grove:"endpoint_id"`
+	EventType      string     `grove:"event_type"`
+	TenantID       string     `grove:"tenant_id"`
 	State          string     `grove:"state"`
 	AttemptCount   int        `grove:"attempt_count"`
 	MaxAttempts    int        `grove:"max_attempts"`
@@ -232,6 +234,8 @@ func toDeliveryModel(d *delivery.Delivery) *deliveryModel {
 		ID:             d.ID.String(),
 		EventID:        d.EventID.String(),
 		EndpointID:     d.EndpointID.String(),
+		EventType:      d.EventType,
+		TenantID:       d.TenantID,
 		State:          string(d.State),
 		AttemptCount:   d.AttemptCount,
 		MaxAttempts:    d.MaxAttempts,
@@ -267,6 +271,8 @@ func fromDeliveryModel(m *deliveryModel) (*delivery.Delivery, error) {
 		ID:             delID,
 		EventID:        evtID,
 		EndpointID:     epID,
+		EventType:      m.EventType,
+		TenantID:       m.TenantID,
 		State:          delivery.State(m.State),
 		AttemptCount:   m.AttemptCount,
 		MaxAttempts:    m.MaxAttempts,

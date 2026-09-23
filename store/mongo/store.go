@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -66,7 +67,49 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 
-	return nil
+	return backfillDeliveryEventFields(ctx, s.mdb.Database())
+}
+
+// backfillDeliveryEventFields copies event_type and tenant_id from each
+// delivery's event onto deliveries written before those fields existed, so a
+// tenant filter on the delivery log does not hide them. It runs on every
+// Migrate and touches only rows still missing the event type, found through
+// the event_type index. A delivery whose event is gone keeps the empty value.
+func backfillDeliveryEventFields(ctx context.Context, db *mongo.Database) error {
+	dels := db.Collection(colDeliveries)
+	cur, err := dels.Find(ctx, bson.M{"event_type": bson.M{"$in": bson.A{nil, ""}}},
+		options.Find().SetProjection(bson.M{"_id": 1, "event_id": 1}))
+	if err != nil {
+		return fmt.Errorf("relay/mongo: backfill deliveries: %w", err)
+	}
+	defer cur.Close(ctx)
+
+	evts := db.Collection(colEvents)
+	for cur.Next(ctx) {
+		var row struct {
+			ID      string `bson:"_id"`
+			EventID string `bson:"event_id"`
+		}
+		if err := cur.Decode(&row); err != nil {
+			return fmt.Errorf("relay/mongo: backfill decode: %w", err)
+		}
+		var evt struct {
+			Type     string `bson:"type"`
+			TenantID string `bson:"tenant_id"`
+		}
+		if err := evts.FindOne(ctx, bson.M{"_id": row.EventID}).Decode(&evt); err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				continue
+			}
+			return fmt.Errorf("relay/mongo: backfill event %s: %w", row.EventID, err)
+		}
+		if _, err := dels.UpdateByID(ctx, row.ID, bson.M{"$set": bson.M{
+			"event_type": evt.Type, "tenant_id": evt.TenantID,
+		}}); err != nil {
+			return fmt.Errorf("relay/mongo: backfill delivery %s: %w", row.ID, err)
+		}
+	}
+	return cur.Err()
 }
 
 // Ping checks database connectivity.
@@ -104,6 +147,9 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			idempotencyIndex(),
 		},
 		colDeliveries: {
+			{Keys: bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
+			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "event_type", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "state", Value: 1}, {Key: "next_attempt_at", Value: 1}}},
 			{Keys: bson.D{{Key: "endpoint_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "event_id", Value: 1}}},

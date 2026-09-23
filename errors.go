@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/xraph/relay/dlq"
+	"github.com/xraph/relay/internal/cursor"
 	"github.com/xraph/relay/internal/errs"
 )
 
@@ -53,4 +54,13 @@ var (
 
 	// ErrEventNotFound is returned when an event cannot be found.
 	ErrEventNotFound = errs.ErrEventNotFound
+
+	// ErrInvalidCursor is returned for a list cursor this store did not
+	// issue. It is never read as "start from the top": a client that sent a
+	// bad cursor would get the first page again and think it was the next.
+	ErrInvalidCursor = cursor.ErrInvalid
+
+	// ErrInvalidFilter is returned for a list filter value the store does
+	// not recognise, such as an unknown delivery status class.
+	ErrInvalidFilter = errors.New("relay: invalid filter")
 )

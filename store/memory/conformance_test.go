@@ -27,3 +27,10 @@ func TestEngineConformance(t *testing.T) {
 		return memory.New()
 	})
 }
+
+func TestDeliveryConformance(t *testing.T) {
+	storetest.RunDeliverySuite(t, func(t *testing.T) storetest.DeliveryBackend {
+		t.Helper()
+		return memory.New()
+	})
+}

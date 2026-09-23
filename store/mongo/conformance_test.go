@@ -31,3 +31,11 @@ func TestEngineConformance(t *testing.T) {
 		return openStore(t, uri)
 	})
 }
+
+func TestDeliveryConformance(t *testing.T) {
+	uri := startMongo(t)
+	storetest.RunDeliverySuite(t, func(t *testing.T) storetest.DeliveryBackend {
+		t.Helper()
+		return openStore(t, uri)
+	})
+}

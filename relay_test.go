@@ -93,6 +93,10 @@ func TestSendHappyPath(t *testing.T) {
 		if d.State != delivery.StatePending {
 			t.Fatalf("expected pending, got %s", d.State)
 		}
+		// Copied from the event so the delivery log can filter on them.
+		if d.EventType != evt.Type || d.TenantID != evt.TenantID {
+			t.Errorf("delivery carries (%q, %q), want the event's (%q, %q)", d.EventType, d.TenantID, evt.Type, evt.TenantID)
+		}
 	}
 }
 

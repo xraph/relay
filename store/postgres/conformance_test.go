@@ -31,3 +31,11 @@ func TestEngineConformance(t *testing.T) {
 		return openPgStore(t, dsn)
 	})
 }
+
+func TestDeliveryConformance(t *testing.T) {
+	dsn := startPostgres(t)
+	storetest.RunDeliverySuite(t, func(t *testing.T) storetest.DeliveryBackend {
+		t.Helper()
+		return openPgStore(t, dsn)
+	})
+}

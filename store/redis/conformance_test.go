@@ -38,3 +38,11 @@ func TestEngineConformance(t *testing.T) {
 		return openRedisStore(t, connStr)
 	})
 }
+
+func TestDeliveryConformance(t *testing.T) {
+	connStr := startRedis(t)
+	storetest.RunDeliverySuite(t, func(t *testing.T) storetest.DeliveryBackend {
+		t.Helper()
+		return openRedisStore(t, connStr)
+	})
+}

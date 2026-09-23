@@ -164,5 +164,37 @@ CREATE INDEX IF NOT EXISTS idx_relay_dlq_tenant ON relay_dlq (tenant_id);
 				return err
 			},
 		},
+		// The delivery log filters on event type and tenant, which live on
+		// the event. Copying them onto the delivery keeps the filter an index
+		// lookup, and the backfill fills rows written before the columns
+		// existed, so a tenant filter does not hide old deliveries.
+		&migrate.Migration{
+			Name:    "relay_deliveries_event_type_tenant",
+			Version: "20260923000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+ALTER TABLE relay_deliveries
+    ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS tenant_id  TEXT NOT NULL DEFAULT '';
+
+UPDATE relay_deliveries d
+   SET event_type = e.type, tenant_id = e.tenant_id
+  FROM relay_events e
+ WHERE d.event_id = e.id AND d.event_type = '';
+
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_created ON relay_deliveries (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_tenant  ON relay_deliveries (tenant_id, created_at DESC);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_relay_deliveries_created;
+DROP INDEX IF EXISTS idx_relay_deliveries_tenant;
+ALTER TABLE relay_deliveries DROP COLUMN IF EXISTS event_type, DROP COLUMN IF EXISTS tenant_id;
+`)
+				return err
+			},
+		},
 	)
 }

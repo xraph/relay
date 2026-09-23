@@ -167,5 +167,61 @@ CREATE INDEX IF NOT EXISTS idx_relay_dlq_failed ON relay_dlq (failed_at);
 				return err
 			},
 		},
+		// See the postgres migration of the same name.
+		&migrate.Migration{
+			Name:    "relay_deliveries_event_type_tenant",
+			Version: "20260923000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// sqlite has no ADD COLUMN IF NOT EXISTS. Checking first keeps
+				// the migration safe to run again, which the backfill test
+				// relies on.
+				for _, col := range []string{"event_type", "tenant_id"} {
+					has, err := sqliteHasColumn(ctx, exec, "relay_deliveries", col)
+					if err != nil {
+						return err
+					}
+					if !has {
+						if _, err := exec.Exec(ctx, "ALTER TABLE relay_deliveries ADD COLUMN "+col+" TEXT NOT NULL DEFAULT ''"); err != nil {
+							return err
+						}
+					}
+				}
+				_, err := exec.Exec(ctx, `
+UPDATE relay_deliveries
+   SET event_type = COALESCE((SELECT type      FROM relay_events WHERE relay_events.id = relay_deliveries.event_id), ''),
+       tenant_id  = COALESCE((SELECT tenant_id FROM relay_events WHERE relay_events.id = relay_deliveries.event_id), '')
+ WHERE event_type = '';
+
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_created ON relay_deliveries (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_relay_deliveries_tenant  ON relay_deliveries (tenant_id, created_at DESC);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_relay_deliveries_created;
+DROP INDEX IF EXISTS idx_relay_deliveries_tenant;
+ALTER TABLE relay_deliveries DROP COLUMN event_type;
+ALTER TABLE relay_deliveries DROP COLUMN tenant_id;
+`)
+				return err
+			},
+		},
 	)
+}
+
+// sqliteHasColumn reports whether table already has col.
+func sqliteHasColumn(ctx context.Context, exec migrate.Executor, table, col string) (bool, error) {
+	rows, err := exec.Query(ctx, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, col)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	var n int
+	if rows.Next() {
+		if err := rows.Scan(&n); err != nil {
+			return false, err
+		}
+	}
+	return n > 0, rows.Err()
 }

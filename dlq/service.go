@@ -143,6 +143,8 @@ func (svc *Service) replayEntry(ctx context.Context, entry *Entry) error {
 		ID:            id.NewDeliveryID(),
 		EventID:       entry.EventID,
 		EndpointID:    entry.EndpointID,
+		EventType:     entry.EventType,
+		TenantID:      entry.TenantID,
 		State:         delivery.StatePending,
 		AttemptCount:  0,
 		MaxAttempts:   svc.maxAttempts,

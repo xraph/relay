@@ -139,6 +139,8 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 			ID:            id.NewDeliveryID(),
 			EventID:       evt.ID,
 			EndpointID:    ep.ID,
+			EventType:     evt.Type,
+			TenantID:      evt.TenantID,
 			State:         delivery.StatePending,
 			AttemptCount:  0,
 			MaxAttempts:   r.config.MaxRetries,

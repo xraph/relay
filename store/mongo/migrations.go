@@ -183,6 +183,23 @@ func init() {
 				return mexec.DB().Collection(colEvents).Indexes().DropOne(ctx, idempotencyIndexName)
 			},
 		},
+		// See Store.Migrate: the delivery log's indexes, and event type and
+		// tenant copied onto deliveries written before those fields existed.
+		&migrate.Migration{
+			Name:    "relay_deliveries_event_type_tenant",
+			Version: "20260923000002",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				if err := mexec.CreateIndexes(ctx, colDeliveries, migrationIndexes()[colDeliveries]); err != nil {
+					return err
+				}
+				return backfillDeliveryEventFields(ctx, mexec.DB().Database())
+			},
+			Down: func(context.Context, migrate.Executor) error { return nil },
+		},
 	)
 }
 

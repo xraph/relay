@@ -19,6 +19,8 @@ type deliveryModel struct {
 	ID             string     `json:"id"`
 	EventID        string     `json:"event_id"`
 	EndpointID     string     `json:"endpoint_id"`
+	EventType      string     `json:"event_type"`
+	TenantID       string     `json:"tenant_id"`
 	State          string     `json:"state"`
 	AttemptCount   int        `json:"attempt_count"`
 	MaxAttempts    int        `json:"max_attempts"`
@@ -37,6 +39,8 @@ func toDeliveryModel(d *delivery.Delivery) *deliveryModel {
 		ID:             d.ID.String(),
 		EventID:        d.EventID.String(),
 		EndpointID:     d.EndpointID.String(),
+		EventType:      d.EventType,
+		TenantID:       d.TenantID,
 		State:          string(d.State),
 		AttemptCount:   d.AttemptCount,
 		MaxAttempts:    d.MaxAttempts,
@@ -72,6 +76,8 @@ func fromDeliveryModel(m *deliveryModel) (*delivery.Delivery, error) {
 		ID:             delID,
 		EventID:        evtID,
 		EndpointID:     epID,
+		EventType:      m.EventType,
+		TenantID:       m.TenantID,
 		State:          delivery.State(m.State),
 		AttemptCount:   m.AttemptCount,
 		MaxAttempts:    m.MaxAttempts,

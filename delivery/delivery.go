@@ -39,6 +39,14 @@ type Delivery struct {
 	// EndpointID references the target endpoint.
 	EndpointID id.ID `json:"endpoint_id"`
 
+	// EventType is the event's type, copied from the event when the
+	// delivery is created so the delivery log can filter on it without a
+	// join, which redis cannot do.
+	EventType string `json:"event_type"`
+
+	// TenantID is the event's tenant, copied for the same reason.
+	TenantID string `json:"tenant_id"`
+
 	// State is the current delivery state.
 	State State `json:"state"`
 

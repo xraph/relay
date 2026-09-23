@@ -322,6 +322,10 @@ func TestReplayEnqueuesWithTheConfiguredBudget(t *testing.T) {
 	if dels[0].EventID != e.EventID || dels[0].EndpointID != e.EndpointID {
 		t.Fatal("the replayed delivery does not target the original event and endpoint")
 	}
+	if dels[0].EventType != e.EventType || dels[0].TenantID != e.TenantID {
+		t.Errorf("replayed delivery carries (%q, %q), want the entry's (%q, %q)",
+			dels[0].EventType, dels[0].TenantID, e.EventType, e.TenantID)
+	}
 }
 
 // Regression guard. The old memory store already kept and marked the row, so
