@@ -116,8 +116,9 @@ TypeID-based identifiers. See [Identity](/docs/concepts/identity).
 
 | Export | Purpose |
 |--------|---------|
-| `Sign(payload, secret, timestamp)` | Compute HMAC-SHA256 signature |
-| `Verify(payload, secret, timestamp, sig)` | Verify signature |
+| `Sign(payload, secret, timestamp) (string, error)` | Compute HMAC-SHA256 signature. Returns `ErrNoSecret` for an empty or whitespace secret |
+| `Verify(payload, secret, timestamp, sig)` | Verify signature. Always `false` for an empty or whitespace secret |
+| `ErrNoSecret` | Returned by `Sign` when the secret is absent |
 | `GenerateSecret()` | Generate `whsec_` signing secret |
 | `Signer` | Stateless signer struct |
 

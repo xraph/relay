@@ -21,15 +21,49 @@ The signed content is `"{timestamp}.{payload}"`. The signature is returned in th
 ```go
 import "github.com/xraph/relay/signature"
 
-sig := signature.Sign(payload, secret, timestamp)
-// "v1=5257a869e4c5a2b5..."
+sig, err := signature.Sign(payload, secret, timestamp)
+if err != nil {
+    // signature.ErrNoSecret: the secret was empty or only whitespace.
+}
+// sig == "v1=5257a869e4c5a2b5..."
 ```
+
+`Sign` refuses an empty or whitespace secret and returns `signature.ErrNoSecret`
+instead of a signature.
+
+It has to. HMAC will happily produce a digest from an empty key, and that
+digest verifies against the same empty key, so it comes out as a well-formed
+`v1=` signature that nothing on the wire distinguishes from a real one. Anybody
+who knows the payload and the timestamp can reproduce it, and a receiver doing
+verification correctly would accept it. Refusing in `Sign` itself means no
+caller can forget the check.
 
 ## Verification
 
 ```go
 ok := signature.Verify(payload, secret, timestamp, receivedSignature)
 ```
+
+`Verify` returns `false` for an empty or whitespace secret, whatever signature
+you pass it. There is no signature that can be correct under a key that does
+not exist.
+
+## Endpoints without a secret
+
+Relay does not deliver to an endpoint with no signing secret. The delivery fails
+with `endpoint has no signing secret` and ends up in the dead letter queue.
+
+`Endpoints().Create` generates a secret whenever you do not supply one, and it
+treats a secret of spaces as not supplied, so this only happens to an endpoint
+written to the store directly. To check a tenant before upgrading:
+
+```go
+unsigned, err := r.Endpoints().ListUnsigned(ctx, "acme")
+```
+
+It audits one tenant at a time and returns an error for an empty tenant rather
+than an empty list, because an empty list would read as a clean result. Rotate a
+secret onto anything it returns with `Endpoints().RotateSecret`.
 
 ## Secret format
 

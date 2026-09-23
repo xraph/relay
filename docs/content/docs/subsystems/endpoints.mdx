@@ -20,6 +20,8 @@ ep, err := r.Endpoints().Create(ctx, endpoint.Input{
 ```
 
 A signing secret is auto-generated (format: `whsec_` + 32 bytes hex) unless provided in the input.
+A secret of only whitespace counts as not provided. Relay will not deliver to an endpoint without
+a secret: see [Signatures](/docs/subsystems/signatures).
 
 ## Operations
 
@@ -32,6 +34,7 @@ A signing secret is auto-generated (format: `whsec_` + 32 bytes hex) unless prov
 | `List(ctx, tenantID, opts)` | List endpoints for a tenant |
 | `SetEnabled(ctx, id, bool)` | Enable or disable |
 | `RotateSecret(ctx, id)` | Generate a new signing secret |
+| `ListUnsigned(ctx, tenantID)` | Endpoints in a tenant with no signing secret. Errors on an empty tenant |
 
 ## Secret rotation
 
