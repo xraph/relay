@@ -8,6 +8,8 @@ import (
 
 	"github.com/xraph/forge"
 	dashboard "github.com/xraph/forge/extensions/dashboard"
+	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/kv"
@@ -19,6 +21,7 @@ import (
 	relaydash "github.com/xraph/relay/dashboard"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
+	relaycontract "github.com/xraph/relay/extension/contract"
 	"github.com/xraph/relay/observability"
 	"github.com/xraph/relay/store"
 	mongostore "github.com/xraph/relay/store/mongo"
@@ -40,6 +43,10 @@ const ExtensionVersion = "0.1.0"
 var (
 	_ forge.Extension          = (*Extension)(nil)
 	_ dashboard.DashboardAware = (*Extension)(nil)
+	// The dashboard finds the contract contributor by this interface. A
+	// signature that drifted from it would make the dashboard skip relay in
+	// silence, so it is asserted here rather than discovered in a browser.
+	_ dashboard.ContractContributorAware = (*Extension)(nil)
 )
 
 // Extension adapts Relay as a Forge extension.
@@ -221,6 +228,30 @@ func (e *Extension) BasePath() string {
 // Deprecated: Use BasePath instead.
 func (e *Extension) Prefix() string {
 	return e.BasePath()
+}
+
+// RegisterContractContributor implements dashboard.ContractContributorAware. It
+// registers the relay contract contributor, which is what the React shell
+// reads. The templ LocalContributor above is unaffected, and both run side by
+// side until the templ dashboard is retired.
+func (e *Extension) RegisterContractContributor(
+	disp *dispatcher.Dispatcher,
+	reg dashcontract.Registry,
+	wreg dashcontract.WardenRegistry,
+) error {
+	if e.r == nil {
+		// Nothing to wire yet. A quiet skip, not a panic that takes the
+		// dashboard down with it. The logger may not exist either on an
+		// extension that was never registered.
+		if logger := e.Logger(); logger != nil {
+			logger.Warn("relay: not initialised; skipping contract contributor registration")
+		}
+		return nil
+	}
+	if err := relaycontract.Register(disp, reg, wreg, relaycontract.Deps{Relay: e.r}); err != nil {
+		return fmt.Errorf("relay: register contract contributor: %w", err)
+	}
+	return nil
 }
 
 // DashboardContributor implements dashboard.DashboardAware. It returns a
