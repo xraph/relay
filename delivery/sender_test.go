@@ -267,7 +267,7 @@ func TestSenderRefusesAnEndpointWithNoSecret(t *testing.T) {
 	evt := newTestEvent()
 	d := newTestDelivery(ep.ID, evt.ID)
 
-	res := delivery.NewSender(5 * time.Second).Send(context.Background(), ep, evt, d)
+	res := delivery.NewSender(5*time.Second).Send(context.Background(), ep, evt, d)
 
 	if reached {
 		t.Fatal("the request reached the receiver despite the endpoint having no secret")
@@ -296,7 +296,7 @@ func TestSenderRefusesAWhitespaceSecret(t *testing.T) {
 	evt := newTestEvent()
 	d := newTestDelivery(ep.ID, evt.ID)
 
-	res := delivery.NewSender(5 * time.Second).Send(context.Background(), ep, evt, d)
+	res := delivery.NewSender(5*time.Second).Send(context.Background(), ep, evt, d)
 
 	if reached {
 		t.Fatal("the request reached the receiver with a whitespace secret")

@@ -221,8 +221,8 @@ func TestListUnsignedFindsEndpointsWithNoSecret(t *testing.T) {
 		Secret:     "",
 		Enabled:    true,
 	}
-	if err := store.CreateEndpoint(ctx(), unsigned); err != nil {
-		t.Fatalf("create unsigned: %v", err)
+	if createErr := store.CreateEndpoint(ctx(), unsigned); createErr != nil {
+		t.Fatalf("create unsigned: %v", createErr)
 	}
 
 	got, err := svc.ListUnsigned(ctx(), "t1")
@@ -318,5 +318,56 @@ func TestListEndpointsTreatsAnEmptyTenantLiterally(t *testing.T) {
 		t.Fatalf("an empty tenant returned %d endpoints. If this backend now "+
 			"means 'every tenant', the backends disagree and callers cannot "+
 			"tell which they are talking to", len(got))
+	}
+}
+
+// Create generated a secret only for "", so "   " was stored as the secret.
+// The signing primitive treats whitespace as absent, which meant an endpoint
+// created through the ordinary service path could never receive a delivery,
+// contradicting the README's claim that only a direct store write reaches
+// this state. The two definitions of "absent" have to agree.
+func TestCreateReplacesAWhitespaceSecret(t *testing.T) {
+	svc := newService()
+	ep, err := svc.Create(ctx(), endpoint.Input{
+		TenantID:   "t1",
+		URL:        "https://a.example/hook",
+		EventTypes: []string{"*"},
+		Secret:     "   ",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if strings.TrimSpace(ep.Secret) == "" {
+		t.Fatalf("Create stored a whitespace secret %q instead of generating one", ep.Secret)
+	}
+	if !strings.HasPrefix(ep.Secret, "whsec_") {
+		t.Fatalf("Secret = %q, want a generated whsec_ secret", ep.Secret)
+	}
+
+	unsigned, err := svc.ListUnsigned(ctx(), "t1")
+	if err != nil {
+		t.Fatalf("list unsigned: %v", err)
+	}
+	if len(unsigned) != 0 {
+		t.Fatalf("an endpoint created through the service is reported unsigned")
+	}
+}
+
+// An empty tenant returned an empty list and a nil error, which reads as
+// "you have no unsigned endpoints". On a security audit that is the worst
+// possible wrong answer, because the operator stops looking. The plan this
+// was written from told readers to call it exactly that way.
+func TestListUnsignedRefusesAnEmptyTenant(t *testing.T) {
+	svc := newService()
+	for _, tenant := range []string{"", "   "} {
+		got, err := svc.ListUnsigned(ctx(), tenant)
+		var verr *endpoint.ValidationError
+		if !errors.As(err, &verr) {
+			t.Fatalf("ListUnsigned(%q) error = %v, want a ValidationError; "+
+				"got %d rows, which reads as a clean audit", tenant, err, len(got))
+		}
+		if verr.Field != "tenant_id" {
+			t.Fatalf("ValidationError.Field = %q, want tenant_id", verr.Field)
+		}
 	}
 }

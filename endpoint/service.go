@@ -43,8 +43,11 @@ func (svc *Service) Create(ctx context.Context, in Input) (*Endpoint, error) {
 		return nil, &ValidationError{Field: "event_types", Message: "at least one event type pattern required"}
 	}
 
+	// Whitespace counts as absent, matching signature.Sign. If the two
+	// definitions disagreed, an endpoint created here could be stored with a
+	// secret the signer then refuses, and it would never receive a delivery.
 	secret := in.Secret
-	if secret == "" {
+	if strings.TrimSpace(secret) == "" {
 		secret = signature.GenerateSecret()
 	}
 
@@ -132,14 +135,22 @@ func (svc *Service) SetEnabled(ctx context.Context, epID id.ID, enabled bool) er
 //
 // This exists to be run before upgrading: it names what the signing change
 // will start failing. Create has always generated a secret when none is
-// supplied, so an endpoint can only reach this state through the store
-// interface directly.
+// supplied (whitespace included), so an endpoint can only reach this state
+// through the store interface directly.
 //
 // tenantID is required and is matched literally. There is no way to scan
 // every tenant: ListEndpoints compares tenant_id for equality on all five
-// backends, so passing "" returns only endpoints whose tenant is the empty
-// string. Audit one tenant at a time.
+// backends. An empty tenantID returns a ValidationError rather than an empty
+// list, because an empty list would read as a clean audit.
+//
+// At most 10000 endpoints are examined per tenant. A tenant with more than
+// that gets a partial audit.
 func (svc *Service) ListUnsigned(ctx context.Context, tenantID string) ([]*Endpoint, error) {
+	// An empty tenant would match nothing and return an empty list with no
+	// error, which reads as a clean audit. Refuse it instead.
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, &ValidationError{Field: "tenant_id", Message: "required: ListUnsigned audits one tenant at a time"}
+	}
 	eps, err := svc.store.ListEndpoints(ctx, tenantID, ListOpts{Limit: 10000})
 	if err != nil {
 		return nil, err
