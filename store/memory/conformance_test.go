@@ -34,3 +34,17 @@ func TestDeliveryConformance(t *testing.T) {
 		return memory.New()
 	})
 }
+
+func TestEventPageConformance(t *testing.T) {
+	storetest.RunEventPageSuite(t, func(t *testing.T) storetest.EventPageBackend {
+		t.Helper()
+		return memory.New()
+	})
+}
+
+func TestDLQPageConformance(t *testing.T) {
+	storetest.RunDLQPageSuite(t, func(t *testing.T) storetest.DLQPageBackend {
+		t.Helper()
+		return memory.New()
+	})
+}

@@ -39,3 +39,19 @@ func TestDeliveryConformance(t *testing.T) {
 		return openStore(t, uri)
 	})
 }
+
+func TestEventPageConformance(t *testing.T) {
+	uri := startMongo(t)
+	storetest.RunEventPageSuite(t, func(t *testing.T) storetest.EventPageBackend {
+		t.Helper()
+		return openStore(t, uri)
+	})
+}
+
+func TestDLQPageConformance(t *testing.T) {
+	uri := startMongo(t)
+	storetest.RunDLQPageSuite(t, func(t *testing.T) storetest.DLQPageBackend {
+		t.Helper()
+		return openStore(t, uri)
+	})
+}

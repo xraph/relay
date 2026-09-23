@@ -36,4 +36,8 @@ type Store interface {
 
 	// CountDLQ returns the total number of DLQ entries.
 	CountDLQ(ctx context.Context) (int64, error)
+
+	// ListDLQPage returns one page of the DLQ, most recent failure first. It
+	// returns relay.ErrInvalidCursor for a cursor it did not issue.
+	ListDLQPage(ctx context.Context, q Query) (*Page, error)
 }

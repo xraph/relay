@@ -52,3 +52,19 @@ func TestDeliveryConformance(t *testing.T) {
 		return s
 	})
 }
+
+func TestEventPageConformance(t *testing.T) {
+	connStr := startRedis(t)
+	storetest.RunEventPageSuite(t, func(t *testing.T) storetest.EventPageBackend {
+		t.Helper()
+		return openRedisStore(t, connStr)
+	})
+}
+
+func TestDLQPageConformance(t *testing.T) {
+	connStr := startRedis(t)
+	storetest.RunDLQPageSuite(t, func(t *testing.T) storetest.DLQPageBackend {
+		t.Helper()
+		return openRedisStore(t, connStr)
+	})
+}

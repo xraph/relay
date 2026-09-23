@@ -39,3 +39,19 @@ func TestDeliveryConformance(t *testing.T) {
 		return openPgStore(t, dsn)
 	})
 }
+
+func TestEventPageConformance(t *testing.T) {
+	dsn := startPostgres(t)
+	storetest.RunEventPageSuite(t, func(t *testing.T) storetest.EventPageBackend {
+		t.Helper()
+		return openPgStore(t, dsn)
+	})
+}
+
+func TestDLQPageConformance(t *testing.T) {
+	dsn := startPostgres(t)
+	storetest.RunDLQPageSuite(t, func(t *testing.T) storetest.DLQPageBackend {
+		t.Helper()
+		return openPgStore(t, dsn)
+	})
+}

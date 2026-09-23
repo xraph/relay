@@ -71,3 +71,17 @@ func TestDeliveryConformance(t *testing.T) {
 		return openSqliteStore(t)
 	})
 }
+
+func TestEventPageConformance(t *testing.T) {
+	storetest.RunEventPageSuite(t, func(t *testing.T) storetest.EventPageBackend {
+		t.Helper()
+		return openSqliteStore(t)
+	})
+}
+
+func TestDLQPageConformance(t *testing.T) {
+	storetest.RunDLQPageSuite(t, func(t *testing.T) storetest.DLQPageBackend {
+		t.Helper()
+		return openSqliteStore(t)
+	})
+}

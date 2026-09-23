@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -35,15 +36,8 @@ func (s *Store) ListDeliveries(ctx context.Context, q delivery.Query) (*delivery
 	if lo, hi, ok := q.StatusClass.Range(); ok {
 		filter["last_status_code"] = bson.M{"$gte": lo, "$lte": hi}
 	}
-	created := bson.M{}
-	if q.From != nil {
-		created["$gte"] = q.From.UTC()
-	}
-	if q.To != nil {
-		created["$lte"] = q.To.UTC()
-	}
-	if len(created) > 0 {
-		filter["created_at"] = created
+	if r := timeRange(q.From, q.To); len(r) > 0 {
+		filter["created_at"] = r
 	}
 	if pos != nil {
 		// The id breaks ties between rows created in the same instant.
@@ -76,4 +70,16 @@ func (s *Store) ListDeliveries(ctx context.Context, q delivery.Query) (*delivery
 		page.Deliveries = append(page.Deliveries, d)
 	}
 	return page, nil
+}
+
+// timeRange is an inclusive $gte/$lte filter from whichever bounds are set.
+func timeRange(from, to *time.Time) bson.M {
+	r := bson.M{}
+	if from != nil {
+		r["$gte"] = from.UTC()
+	}
+	if to != nil {
+		r["$lte"] = to.UTC()
+	}
+	return r
 }

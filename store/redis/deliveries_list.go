@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 
@@ -47,53 +48,72 @@ func (s *Store) ListDeliveries(ctx context.Context, q delivery.Query) (*delivery
 	case q.EventID != nil:
 		index = zDeliveryEvt + q.EventID.String()
 	default:
-		built, err := s.rdb.Exists(ctx, deliveryIndexBuilt).Result()
-		if err != nil {
-			return nil, fmt.Errorf("relay/redis: check delivery index: %w", err)
+		built, existsErr := s.rdb.Exists(ctx, deliveryIndexBuilt).Result()
+		if existsErr != nil {
+			return nil, fmt.Errorf("relay/redis: check delivery index: %w", existsErr)
 		}
 		if built == 0 {
 			return nil, ErrDeliveryIndexNotBuilt
 		}
 	}
 
-	upper, lower := math.Inf(1), math.Inf(-1)
-	if q.To != nil {
-		upper = scoreFromTime(*q.To)
-	}
+	upper, lower := bounds(q.From, q.To)
 	if pos != nil {
 		upper = math.Min(upper, scoreFromTime(pos.CreatedAt))
 	}
-	if q.From != nil {
-		lower = scoreFromTime(*q.From)
-	}
 
-	page := &delivery.Page{Deliveries: make([]*delivery.Delivery, 0, limit), Complete: true}
-	var lastExamined *delivery.Delivery
+	items, next, complete, walkErr := walk(ctx, s, index, upper, lower, limit,
+		func(ctx context.Context, member string) (*delivery.Delivery, error) {
+			var m deliveryModel
+			if getErr := s.getEntity(ctx, entityKey(prefixDelivery, member), &m); getErr != nil {
+				return nil, getErr
+			}
+			return fromDeliveryModel(&m)
+		},
+		pos.After, q.Matches, delivery.CursorFor)
+	if walkErr != nil {
+		return nil, fmt.Errorf("relay/redis: list deliveries: %w", walkErr)
+	}
+	return &delivery.Page{Deliveries: items, NextCursor: next, Complete: complete}, nil
+}
+
+// walk reads a sorted set newest first between lower and upper (inclusive),
+// loads each member, and keeps the ones that sort after the cursor and match.
+// It examines at most s.scanWindow members. Stopping at the window before the
+// page fills returns complete false with a cursor at the last row examined.
+// A member whose record is gone is skipped.
+func walk[T any](
+	ctx context.Context, s *Store, index string, upper, lower float64, limit int,
+	load func(context.Context, string) (T, error),
+	after, matches func(T) bool,
+	cursorFor func(T) string,
+) (items []T, next string, complete bool, err error) {
+	items = make([]T, 0, limit)
+	var last T
+	haveLast := false
 	examined := 0
 
 	for offset := int64(0); ; offset += scanBatch {
-		entries, err := s.rdb.ZRevRangeByScoreWithScores(ctx, index, &goredis.ZRangeBy{
+		entries, rangeErr := s.rdb.ZRevRangeByScoreWithScores(ctx, index, &goredis.ZRangeBy{
 			Max:    scoreString(upper),
 			Min:    scoreString(lower),
 			Offset: offset,
 			Count:  scanBatch,
 		}).Result()
-		if err != nil {
-			return nil, fmt.Errorf("relay/redis: list deliveries: %w", err)
+		if rangeErr != nil {
+			return nil, "", false, rangeErr
 		}
 		for _, e := range entries {
 			if examined == s.scanWindow {
 				// Out of window with more index left. What was examined is
 				// covered; the rest is reachable from the cursor.
-				if len(page.Deliveries) < limit {
-					page.Complete = false
-					if lastExamined != nil {
-						page.NextCursor = delivery.CursorFor(lastExamined)
-					}
-				} else {
-					page.NextCursor = delivery.CursorFor(page.Deliveries[limit-1])
+				if len(items) == limit {
+					return items, cursorFor(items[limit-1]), true, nil
 				}
-				return page, nil
+				if haveLast {
+					next = cursorFor(last)
+				}
+				return items, next, false, nil
 			}
 			examined++
 
@@ -101,35 +121,30 @@ func (s *Store) ListDeliveries(ctx context.Context, q delivery.Query) (*delivery
 			if !ok {
 				continue
 			}
-			var m deliveryModel
-			if err := s.getEntity(ctx, entityKey(prefixDelivery, member), &m); err != nil {
-				if isNotFound(err) {
+			row, loadErr := load(ctx, member)
+			if loadErr != nil {
+				if isNotFound(loadErr) {
 					continue
 				}
-				return nil, fmt.Errorf("relay/redis: list deliveries get: %w", err)
+				return nil, "", false, loadErr
 			}
-			d, err := fromDeliveryModel(&m)
-			if err != nil {
-				return nil, err
-			}
-			// The score bound is inclusive at the cursor, so rows created in
-			// the cursor's instant are checked by id here.
-			if !pos.After(d) {
+			// The score bound is inclusive at the cursor, so rows in the
+			// cursor's instant are checked by id here.
+			if !after(row) {
 				continue
 			}
-			lastExamined = d
-			if !q.Matches(d) {
+			last, haveLast = row, true
+			if !matches(row) {
 				continue
 			}
-			if len(page.Deliveries) == limit {
+			if len(items) == limit {
 				// A match beyond the page: there is a next one.
-				page.NextCursor = delivery.CursorFor(page.Deliveries[limit-1])
-				return page, nil
+				return items, cursorFor(items[limit-1]), true, nil
 			}
-			page.Deliveries = append(page.Deliveries, d)
+			items = append(items, row)
 		}
 		if len(entries) < scanBatch {
-			return page, nil
+			return items, "", true, nil
 		}
 	}
 }
@@ -223,4 +238,16 @@ func (s *Store) backfillDeliveryFields(ctx context.Context) error {
 		return fmt.Errorf("relay/redis: record delivery fields backfill: %w", err)
 	}
 	return nil
+}
+
+// bounds turns an inclusive time window into sorted-set score bounds.
+func bounds(from, to *time.Time) (upper, lower float64) {
+	upper, lower = math.Inf(1), math.Inf(-1)
+	if to != nil {
+		upper = scoreFromTime(*to)
+	}
+	if from != nil {
+		lower = scoreFromTime(*from)
+	}
+	return upper, lower
 }

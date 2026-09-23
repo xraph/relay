@@ -770,3 +770,63 @@ func (s *Store) ListDeliveries(_ context.Context, q delivery.Query) (*delivery.P
 	}
 	return page, nil
 }
+
+// ListEventsPage returns one page of the event log, newest first.
+func (s *Store) ListEventsPage(_ context.Context, q event.Query) (*event.Page, error) {
+	limit, pos, err := q.Prepare()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	matched := make([]*event.Event, 0, len(s.events))
+	for _, e := range s.events {
+		if q.Matches(e) && pos.After(e) {
+			cp := *e
+			matched = append(matched, &cp)
+		}
+	}
+	s.mu.RUnlock()
+	sort.Slice(matched, func(i, j int) bool {
+		a, b := matched[i], matched[j]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.ID.String() > b.ID.String()
+	})
+	page := &event.Page{Events: matched, Complete: true}
+	if len(matched) > limit {
+		page.Events = matched[:limit]
+		page.NextCursor = event.CursorFor(matched[limit-1])
+	}
+	return page, nil
+}
+
+// ListDLQPage returns one page of the DLQ, most recent failure first.
+func (s *Store) ListDLQPage(_ context.Context, q dlq.Query) (*dlq.Page, error) {
+	limit, pos, err := q.Prepare()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	matched := make([]*dlq.Entry, 0, len(s.dlqEntries))
+	for _, e := range s.dlqEntries {
+		if q.Matches(e) && pos.After(e) {
+			cp := *e
+			matched = append(matched, &cp)
+		}
+	}
+	s.mu.RUnlock()
+	sort.Slice(matched, func(i, j int) bool {
+		a, b := matched[i], matched[j]
+		if !a.FailedAt.Equal(b.FailedAt) {
+			return a.FailedAt.After(b.FailedAt)
+		}
+		return a.ID.String() > b.ID.String()
+	})
+	page := &dlq.Page{Entries: matched, Complete: true}
+	if len(matched) > limit {
+		page.Entries = matched[:limit]
+		page.NextCursor = dlq.CursorFor(matched[limit-1])
+	}
+	return page, nil
+}
