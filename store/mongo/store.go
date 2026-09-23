@@ -46,6 +46,13 @@ func (s *Store) DB() *grove.DB { return s.db }
 
 // Migrate creates indexes for all relay collections.
 func (s *Store) Migrate(ctx context.Context) error {
+	// Earlier versions created a sparse unique index on idempotency_key,
+	// which refused every un-keyed event after the first. It has to go before
+	// the partial one can take its place on the same key.
+	if err := s.mdb.Collection(colEvents).Indexes().DropOne(ctx, legacyIdempotencyIndex); err != nil && !isIndexNotFound(err) {
+		return fmt.Errorf("relay/mongo: drop legacy idempotency index: %w", err)
+	}
+
 	indexes := migrationIndexes()
 
 	for col, models := range indexes {
@@ -94,10 +101,7 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 		},
 		colEvents: {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "type", Value: 1}, {Key: "created_at", Value: -1}}},
-			{
-				Keys:    bson.D{{Key: "idempotency_key", Value: 1}},
-				Options: options.Index().SetUnique(true).SetSparse(true),
-			},
+			idempotencyIndex(),
 		},
 		colDeliveries: {
 			{Keys: bson.D{{Key: "state", Value: 1}, {Key: "next_attempt_at", Value: 1}}},
