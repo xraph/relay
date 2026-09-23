@@ -43,6 +43,12 @@ func TestDeliveryConformance(t *testing.T) {
 	connStr := startRedis(t)
 	storetest.RunDeliverySuite(t, func(t *testing.T) storetest.DeliveryBackend {
 		t.Helper()
-		return openRedisStore(t, connStr)
+		s := openRedisStore(t, connStr)
+		// The every-delivery list needs the global index, which Migrate
+		// builds, exactly as a deployment does.
+		if err := s.Migrate(context.Background()); err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
+		return s
 	})
 }

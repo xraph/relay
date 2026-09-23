@@ -115,6 +115,7 @@ func (s *Store) Enqueue(ctx context.Context, d *delivery.Delivery) error {
 	pipe.ZAdd(ctx, zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
 	pipe.ZAdd(ctx, zDeliveryEP+m.EndpointID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	pipe.ZAdd(ctx, zDeliveryEvt+m.EventID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe.ZAdd(ctx, zDeliveryAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("relay/redis: enqueue delivery indexes: %w", err)
@@ -141,6 +142,7 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 		pipe.ZAdd(ctx, zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
 		pipe.ZAdd(ctx, zDeliveryEP+m.EndpointID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 		pipe.ZAdd(ctx, zDeliveryEvt+m.EventID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+		pipe.ZAdd(ctx, zDeliveryAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	}
 
 	_, err := pipe.Exec(ctx)

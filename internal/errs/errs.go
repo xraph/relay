@@ -12,4 +12,7 @@ var (
 
 	// ErrEventNotFound is relay.ErrEventNotFound.
 	ErrEventNotFound = errors.New("relay: event not found")
+
+	// ErrInvalidFilter is relay.ErrInvalidFilter.
+	ErrInvalidFilter = errors.New("relay: invalid filter")
 )

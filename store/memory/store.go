@@ -738,3 +738,35 @@ func (s *Store) PurgeAttempts(_ context.Context, before time.Time) (int64, error
 	}
 	return n, nil
 }
+
+// ListDeliveries returns one page of the delivery log, newest first.
+func (s *Store) ListDeliveries(_ context.Context, q delivery.Query) (*delivery.Page, error) {
+	limit, pos, err := q.Prepare()
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+	matched := make([]*delivery.Delivery, 0, len(s.deliveries))
+	for _, d := range s.deliveries {
+		if q.Matches(d) && pos.After(d) {
+			matched = append(matched, copyDelivery(d))
+		}
+	}
+	s.mu.RUnlock()
+
+	sort.Slice(matched, func(i, j int) bool {
+		a, b := matched[i], matched[j]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.ID.String() > b.ID.String()
+	})
+
+	page := &delivery.Page{Deliveries: matched, Complete: true}
+	if len(matched) > limit {
+		page.Deliveries = matched[:limit]
+		page.NextCursor = delivery.CursorFor(matched[limit-1])
+	}
+	return page, nil
+}

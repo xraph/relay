@@ -62,5 +62,5 @@ var (
 
 	// ErrInvalidFilter is returned for a list filter value the store does
 	// not recognise, such as an unknown delivery status class.
-	ErrInvalidFilter = errors.New("relay: invalid filter")
+	ErrInvalidFilter = errs.ErrInvalidFilter
 )

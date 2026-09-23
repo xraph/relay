@@ -28,13 +28,18 @@ var _ relaystore.Store = (*Store)(nil)
 type Store struct {
 	kv  *kv.Store
 	rdb goredis.UniversalClient
+
+	// scanWindow bounds how many index entries one list call examines when
+	// it has to filter in Go. See ListDeliveries.
+	scanWindow int
 }
 
 // New creates a new Redis store backed by Grove KV.
 func New(store *kv.Store) *Store {
 	return &Store{
-		kv:  store,
-		rdb: redisdriver.UnwrapClient(store),
+		kv:         store,
+		rdb:        redisdriver.UnwrapClient(store),
+		scanWindow: defaultScanWindow,
 	}
 }
 
@@ -55,7 +60,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.checkKeysAreRaw(ctx); err != nil {
 		return err
 	}
-	return s.backfillEndpointAll(ctx)
+	if err := s.backfillEndpointAll(ctx); err != nil {
+		return err
+	}
+	if err := s.backfillDeliveryFields(ctx); err != nil {
+		return err
+	}
+	return s.backfillDeliveryAll(ctx)
 }
 
 // checkKeysAreRaw confirms that kv and the raw client mean the same key by the

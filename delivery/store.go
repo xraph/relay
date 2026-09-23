@@ -34,6 +34,12 @@ type Store interface {
 	// CountPending returns the number of deliveries awaiting attempt.
 	CountPending(ctx context.Context) (int64, error)
 
+	// ListDeliveries returns one page of the whole delivery log, newest
+	// first, filtered by q. It returns relay.ErrInvalidCursor for a cursor
+	// it did not issue and relay.ErrInvalidFilter for an unknown status
+	// class.
+	ListDeliveries(ctx context.Context, q Query) (*Page, error)
+
 	// RecordAttempt stores one attempt. The engine writes it synchronously,
 	// next to UpdateDelivery.
 	RecordAttempt(ctx context.Context, a *Attempt) error

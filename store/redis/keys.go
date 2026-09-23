@@ -29,6 +29,7 @@ const (
 	zDeliveryEP     = "relay:z:del:ep:"     // + endpoint ID
 	zDeliveryEvt    = "relay:z:del:evt:"    // + event ID
 	zDeliveryPend   = "relay:z:del:pending"
+	zDeliveryAll    = "relay:z:del:all" // every delivery, scored by created-at
 	zDLQAll         = "relay:z:dlq:all"
 	zDLQTenant      = "relay:z:dlq:tenant:" // + tenant ID
 	zDLQEndpoint    = "relay:z:dlq:ep:"     // + endpoint ID
@@ -56,6 +57,16 @@ const (
 	endpointIndexBuilt    = "relay:migrated:ep_all:built"
 
 	endpointBackfillTTL = 24 * time.Hour
+)
+
+// Markers for the global delivery index, with the same split of jobs as the
+// endpoint ones. deliveryFieldsBackfilled records the one-off copy of event
+// type and tenant onto deliveries written before those fields existed; that
+// pass reads every delivery, so it runs once rather than on a timer.
+const (
+	migratedDeliveryAllV1    = "relay:migrated:del_all:v1"
+	deliveryIndexBuilt       = "relay:migrated:del_all:built"
+	deliveryFieldsBackfilled = "relay:migrated:del_fields:v1"
 )
 
 // entityKey returns the primary key for an entity.
