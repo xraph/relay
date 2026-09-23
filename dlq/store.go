@@ -18,8 +18,13 @@ type Store interface {
 	// GetDLQ returns a DLQ entry by ID.
 	GetDLQ(ctx context.Context, dlqID id.ID) (*Entry, error)
 
-	// Replay marks a DLQ entry for redelivery (re-enqueues the delivery).
-	Replay(ctx context.Context, dlqID id.ID) error
+	// MarkReplayed records that an entry has been replayed. The row is kept:
+	// the DLQ is a log, and a marked row is what makes a second replay
+	// refusable. Returns relay.ErrDLQNotFound when the entry does not exist.
+	//
+	// Replay itself is not a store operation. It lives in Service, the only
+	// place that can see the configured retry budget.
+	MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error
 
 	// ReplayBulk replays all DLQ entries in a time window.
 	ReplayBulk(ctx context.Context, from, to time.Time) (int64, error)

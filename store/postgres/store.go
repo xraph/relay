@@ -660,35 +660,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return nil
 }
 
-func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
-	// Get the DLQ entry.
-	entry, err := s.GetDLQ(ctx, dlqID)
-	if err != nil {
-		return err
-	}
-
-	// Re-enqueue a new delivery.
-	d := &delivery.Delivery{
-		ID:            id.NewDeliveryID(),
-		EventID:       entry.EventID,
-		EndpointID:    entry.EndpointID,
-		State:         delivery.StatePending,
-		NextAttemptAt: time.Now().UTC(),
-	}
-	d.CreatedAt = time.Now().UTC()
-	d.UpdatedAt = d.CreatedAt
-
-	if enqueueErr := s.Enqueue(ctx, d); enqueueErr != nil {
-		return enqueueErr
-	}
-
-	// Remove from DLQ.
-	_, err = s.pg.NewDelete((*dlqEntryModel)(nil)).
-		Where("id = $1", dlqID.String()).
-		Exec(ctx)
-	return err
-}
-
 func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
 	var models []dlqEntryModel
 	if err := s.pg.NewSelect(&models).

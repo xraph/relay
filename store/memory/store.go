@@ -567,6 +567,18 @@ func (s *Store) GetDLQ(_ context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	return e, nil
 }
 
+// AllDeliveries returns every delivery currently held. Test support: the
+// delivery store interface has no unfiltered list.
+func (s *Store) AllDeliveries() []*delivery.Delivery {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*delivery.Delivery, 0, len(s.deliveries))
+	for _, d := range s.deliveries {
+		out = append(out, d)
+	}
+	return out
+}
+
 // MarkReplayed records that a DLQ entry has been replayed. The row is kept:
 // the DLQ is a log, and a marked row is what lets the service refuse a second
 // replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
@@ -581,33 +593,6 @@ func (s *Store) MarkReplayed(_ context.Context, dlqID id.ID, at time.Time) error
 	}
 	t := at.UTC()
 	e.ReplayedAt = &t
-	return nil
-}
-
-// Replay marks a DLQ entry for redelivery and re-enqueues the delivery.
-func (s *Store) Replay(_ context.Context, dlqID id.ID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	e, ok := s.dlqEntries[dlqID.String()]
-	if !ok {
-		return relay.ErrDLQNotFound
-	}
-
-	now := time.Now().UTC()
-	e.ReplayedAt = &now
-
-	d := &delivery.Delivery{
-		Entity:        relay.NewEntity(),
-		ID:            id.NewDeliveryID(),
-		EventID:       e.EventID,
-		EndpointID:    e.EndpointID,
-		State:         delivery.StatePending,
-		AttemptCount:  0,
-		MaxAttempts:   5,
-		NextAttemptAt: now,
-	}
-	s.deliveries[d.ID.String()] = d
 	return nil
 }
 

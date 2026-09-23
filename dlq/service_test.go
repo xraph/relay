@@ -3,9 +3,11 @@ package dlq_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/xraph/relay"
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
@@ -16,6 +18,28 @@ import (
 )
 
 func ctx() context.Context { return context.Background() }
+
+// seedEntry pushes an un-replayed DLQ entry and returns it.
+func seedEntry(t *testing.T, store *memory.Store) *dlq.Entry {
+	t.Helper()
+	e := &dlq.Entry{
+		Entity:       entity.New(),
+		ID:           id.NewDLQID(),
+		DeliveryID:   id.NewDeliveryID(),
+		EventID:      id.NewEventID(),
+		EndpointID:   id.NewEndpointID(),
+		EventType:    "invoice.created",
+		TenantID:     "tenant-1",
+		URL:          "https://receiver.example/hook",
+		Error:        "connection refused",
+		AttemptCount: 5,
+		FailedAt:     time.Now().UTC().Add(-time.Hour),
+	}
+	if err := store.Push(ctx(), e); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return e
+}
 
 func newService() (*dlq.Service, *memory.Store) {
 	store := memory.New()
@@ -265,5 +289,84 @@ func TestConfigHonoursMaxAttempts(t *testing.T) {
 	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: 3}, nil)
 	if got := svc.MaxAttempts(); got != 3 {
 		t.Fatalf("MaxAttempts() = %d, want 3", got)
+	}
+}
+
+// The budget must come from config. 7 is deliberate: the old memory store
+// hardcoded 5 and the other backends left it at 0, so a test at 5 would pass
+// on the old code by coincidence and prove nothing.
+func TestReplayEnqueuesWithTheConfiguredBudget(t *testing.T) {
+	store := memory.New()
+	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: 7}, nil)
+	e := seedEntry(t, store)
+
+	if err := svc.Replay(ctx(), e.ID); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	dels := store.AllDeliveries()
+	if len(dels) != 1 {
+		t.Fatalf("got %d deliveries, want 1", len(dels))
+	}
+	if dels[0].MaxAttempts != 7 {
+		t.Fatalf("MaxAttempts = %d, want 7 from config", dels[0].MaxAttempts)
+	}
+	if dels[0].AttemptCount != 0 {
+		t.Fatalf("AttemptCount = %d, want 0: a replay starts over", dels[0].AttemptCount)
+	}
+	if dels[0].State != delivery.StatePending {
+		t.Fatalf("State = %q, want pending", dels[0].State)
+	}
+	if dels[0].EventID != e.EventID || dels[0].EndpointID != e.EndpointID {
+		t.Fatal("the replayed delivery does not target the original event and endpoint")
+	}
+}
+
+// Regression guard. The old memory store already kept and marked the row, so
+// this passes before and after on memory; the conformance suite is what proves
+// row-keeping on the real backends.
+func TestReplayKeepsAndMarksTheEntry(t *testing.T) {
+	svc, store := newService()
+	e := seedEntry(t, store)
+
+	if err := svc.Replay(ctx(), e.ID); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	got, err := store.GetDLQ(ctx(), e.ID)
+	if err != nil {
+		t.Fatalf("the entry must survive a replay: %v", err)
+	}
+	if got.ReplayedAt == nil {
+		t.Fatal("ReplayedAt is nil after a replay")
+	}
+}
+
+// Replaying sends a real webhook. A second replay of the same entry must be
+// refused before anything is enqueued, not after.
+func TestReplayTwiceIsRefused(t *testing.T) {
+	svc, store := newService()
+	e := seedEntry(t, store)
+
+	if err := svc.Replay(ctx(), e.ID); err != nil {
+		t.Fatalf("first replay: %v", err)
+	}
+	err := svc.Replay(ctx(), e.ID)
+	if !errors.Is(err, relay.ErrAlreadyReplayed) {
+		t.Fatalf("second replay error = %v, want ErrAlreadyReplayed", err)
+	}
+	if !errors.Is(err, dlq.ErrAlreadyReplayed) {
+		t.Fatal("relay.ErrAlreadyReplayed and dlq.ErrAlreadyReplayed are not the same value")
+	}
+	if n := len(store.AllDeliveries()); n != 1 {
+		t.Fatalf("got %d deliveries after a refused replay, want 1: "+
+			"the refusal must happen before the enqueue", n)
+	}
+}
+
+func TestReplayMissingEntry(t *testing.T) {
+	svc, _ := newService()
+	err := svc.Replay(ctx(), id.NewDLQID())
+	if !errors.Is(err, relay.ErrDLQNotFound) {
+		t.Fatalf("error = %v, want ErrDLQNotFound", err)
 	}
 }

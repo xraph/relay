@@ -123,38 +123,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return nil
 }
 
-func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
-	entry, err := s.GetDLQ(ctx, dlqID)
-	if err != nil {
-		return err
-	}
-
-	t := now()
-
-	d := &delivery.Delivery{
-		Entity:        entity.New(),
-		ID:            id.NewDeliveryID(),
-		EventID:       entry.EventID,
-		EndpointID:    entry.EndpointID,
-		State:         delivery.StatePending,
-		MaxAttempts:   entry.AttemptCount,
-		NextAttemptAt: t,
-	}
-
-	if enqErr := s.Enqueue(ctx, d); enqErr != nil {
-		return fmt.Errorf("relay/mongo: replay enqueue: %w", enqErr)
-	}
-
-	_, err = s.mdb.NewDelete((*dlqEntryModel)(nil)).
-		Filter(bson.M{"_id": dlqID.String()}).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("relay/mongo: replay delete dlq: %w", err)
-	}
-
-	return nil
-}
-
 // ReplayBulk replays all DLQ entries in a time window.
 func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
 	var models []dlqEntryModel

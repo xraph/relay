@@ -729,37 +729,37 @@ func TestDLQList(t *testing.T) {
 	}
 }
 
-func TestDLQReplay(t *testing.T) {
+// Replay is not a store operation any more; it lives in dlq.Service, which is
+// the only place that can see the configured retry budget, and is tested
+// there. What the store still owns is recording the replay, so that is what
+// this tests.
+func TestDLQMarkReplayed(t *testing.T) {
 	s := New()
 
 	entry := newDLQEntry(id.NewEventID(), id.NewEndpointID())
 	_ = s.Push(ctx(), entry)
 
-	// Before replay, 0 pending deliveries
-	count, _ := s.CountPending(ctx())
-	if count != 0 {
-		t.Fatalf("expected 0 pending, got %d", count)
-	}
-
-	// Replay
-	if err := s.Replay(ctx(), entry.ID); err != nil {
+	at := time.Now().UTC()
+	if err := s.MarkReplayed(ctx(), entry.ID, at); err != nil {
 		t.Fatal(err)
 	}
 
-	// After replay, 1 pending delivery
-	count, _ = s.CountPending(ctx())
-	if count != 1 {
-		t.Fatalf("expected 1 pending, got %d", count)
+	// The row is kept and marked, not deleted.
+	got, err := s.GetDLQ(ctx(), entry.ID)
+	if err != nil {
+		t.Fatalf("the entry must survive being marked: %v", err)
 	}
-
-	// Entry should have ReplayedAt set
-	got, _ := s.GetDLQ(ctx(), entry.ID)
 	if got.ReplayedAt == nil {
 		t.Fatal("expected ReplayedAt to be set")
 	}
 
-	// Replay not found
-	if err := s.Replay(ctx(), id.NewDLQID()); !errors.Is(err, relay.ErrDLQNotFound) {
+	// Marking enqueues nothing: sending the webhook is the service's job.
+	count, _ := s.CountPending(ctx())
+	if count != 0 {
+		t.Fatalf("MarkReplayed enqueued %d deliveries, want 0", count)
+	}
+
+	if err := s.MarkReplayed(ctx(), id.NewDLQID(), at); !errors.Is(err, relay.ErrDLQNotFound) {
 		t.Fatalf("expected ErrDLQNotFound, got %v", err)
 	}
 }

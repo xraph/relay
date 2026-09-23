@@ -105,8 +105,46 @@ func (svc *Service) Get(ctx context.Context, dlqID id.ID) (*Entry, error) {
 }
 
 // Replay re-enqueues a single DLQ entry for redelivery.
+//
+// This is a destructive read: it sends a real webhook to a real receiver,
+// which cannot tell it apart from the original. An entry that has already
+// been replayed is refused rather than sent twice.
+//
+// The replayed delivery takes its retry budget from config. The per-backend
+// Replay this replaced left MaxAttempts at 0 on postgres, sqlite and redis,
+// so the retrier evaluated `1 < 0` and sent the delivery straight back here.
 func (svc *Service) Replay(ctx context.Context, dlqID id.ID) error {
-	return svc.store.Replay(ctx, dlqID)
+	entry, err := svc.store.GetDLQ(ctx, dlqID)
+	if err != nil {
+		return err
+	}
+	if entry.ReplayedAt != nil {
+		return ErrAlreadyReplayed
+	}
+
+	now := time.Now().UTC()
+	d := &delivery.Delivery{
+		Entity:        entity.New(),
+		ID:            id.NewDeliveryID(),
+		EventID:       entry.EventID,
+		EndpointID:    entry.EndpointID,
+		State:         delivery.StatePending,
+		AttemptCount:  0,
+		MaxAttempts:   svc.maxAttempts,
+		NextAttemptAt: now,
+	}
+	if err := svc.enq.Enqueue(ctx, d); err != nil {
+		return fmt.Errorf("dlq: replay enqueue: %w", err)
+	}
+
+	// Marking after the enqueue means a failure here leaves the entry
+	// unmarked and replayable. That risks one duplicate delivery if the
+	// operator retries, which is the safer direction: marking first and then
+	// failing the enqueue would lose the redelivery with nothing to show it.
+	if err := svc.store.MarkReplayed(ctx, dlqID, now); err != nil {
+		return fmt.Errorf("dlq: mark replayed: %w", err)
+	}
+	return nil
 }
 
 // ReplayBulk re-enqueues all DLQ entries within a time range.

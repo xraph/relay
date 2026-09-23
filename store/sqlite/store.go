@@ -636,31 +636,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return nil
 }
 
-func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
-	entry, err := s.GetDLQ(ctx, dlqID)
-	if err != nil {
-		return err
-	}
-
-	d := &delivery.Delivery{
-		Entity:        entity.New(),
-		ID:            id.NewDeliveryID(),
-		EventID:       entry.EventID,
-		EndpointID:    entry.EndpointID,
-		State:         delivery.StatePending,
-		NextAttemptAt: now(),
-	}
-
-	if enqueueErr := s.Enqueue(ctx, d); enqueueErr != nil {
-		return enqueueErr
-	}
-
-	_, err = s.sdb.NewDelete((*dlqEntryModel)(nil)).
-		Where("id = ?", dlqID.String()).
-		Exec(ctx)
-	return err
-}
-
 func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
 	var models []dlqEntryModel
 	if err := s.sdb.NewSelect(&models).

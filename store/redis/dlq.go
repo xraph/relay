@@ -189,31 +189,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return s.setEntity(ctx, key, &m)
 }
 
-func (s *Store) Replay(ctx context.Context, dlqID id.ID) error {
-	entry, err := s.GetDLQ(ctx, dlqID)
-	if err != nil {
-		return err
-	}
-
-	// Re-enqueue a new delivery.
-	d := &delivery.Delivery{
-		ID:            id.NewDeliveryID(),
-		EventID:       entry.EventID,
-		EndpointID:    entry.EndpointID,
-		State:         delivery.StatePending,
-		NextAttemptAt: now(),
-	}
-	d.CreatedAt = now()
-	d.UpdatedAt = d.CreatedAt
-
-	if enqueueErr := s.Enqueue(ctx, d); enqueueErr != nil {
-		return enqueueErr
-	}
-
-	// Remove from DLQ.
-	return s.deleteDLQEntry(ctx, dlqID.String(), entry.TenantID, entry.EndpointID.String())
-}
-
 func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
 	minScore := scoreFromTime(from)
 	maxScore := scoreFromTime(to)
