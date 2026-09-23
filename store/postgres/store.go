@@ -637,15 +637,18 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	return fromDLQEntryModel(m)
 }
 
-// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
-// the DLQ is a log, and a marked row is what lets the service refuse a second
-// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
-// when the entry does not exist.
+// MarkReplayed claims a DLQ entry for replay. It sets replayed_at only if it
+// is not already set, and does so atomically, so of any number of concurrent
+// callers exactly one succeeds. The service calls this before it sends the
+// webhook: a claim that overwrote instead would let two replays both win and
+// both send. Returns relay.ErrAlreadyReplayed when the entry is already
+// claimed and relay.ErrDLQNotFound when it does not exist.
 func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error {
 	res, err := s.pg.NewUpdate((*dlqEntryModel)(nil)).
 		Set("replayed_at = $1", at.UTC()).
 		Set("updated_at = $2", time.Now().UTC()).
 		Where("id = $3", dlqID.String()).
+		Where("replayed_at IS NULL").
 		Exec(ctx)
 	if err != nil {
 		return err
@@ -654,10 +657,15 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	if err != nil {
 		return err
 	}
-	if rows == 0 {
-		return relay.ErrDLQNotFound
+	if rows == 1 {
+		return nil
 	}
-	return nil
+	// Nothing updated: either the row is missing or someone already claimed
+	// it. The WHERE clause cannot say which, so look.
+	if _, getErr := s.GetDLQ(ctx, dlqID); getErr != nil {
+		return getErr
+	}
+	return relay.ErrAlreadyReplayed
 }
 
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {

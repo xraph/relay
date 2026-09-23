@@ -21,7 +21,14 @@ func openSqliteStore(t *testing.T) *sqlitestore.Store {
 	ctx := context.Background()
 
 	drv := sqlitedriver.New()
-	if err := drv.Open(ctx, filepath.Join(t.TempDir(), "relay.db")); err != nil {
+	// busy_timeout lets a writer wait for the lock instead of failing at
+	// once with SQLITE_BUSY. It is per connection, so it has to be in the
+	// DSN to reach every connection in the pool; a PRAGMA run after opening
+	// would configure only one of them. Without it, concurrent claims fail
+	// with "database is locked" (never with two winners: the claim is still
+	// atomic, the loser just errors instead of waiting its turn).
+	dsn := "file:" + filepath.Join(t.TempDir(), "relay.db") + "?_pragma=busy_timeout(5000)"
+	if err := drv.Open(ctx, dsn); err != nil {
 		t.Fatalf("open sqlitedriver: %v", err)
 	}
 	db, err := grove.Open(drv)

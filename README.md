@@ -232,7 +232,11 @@ import (
 )
 
 sdb := sqlitedriver.New()
-sdb.Open(ctx, "relay.db")
+// busy_timeout makes a writer wait for the lock instead of failing at once
+// with "database is locked". Relay writes from several goroutines (ten
+// delivery workers by default), so you want it. It has to go in the DSN:
+// it is per connection, and the DSN is the only place that reaches them all.
+sdb.Open(ctx, "file:relay.db?_pragma=busy_timeout(5000)")
 
 db, _ := grove.Open(sdb)
 store := sqlite.New(db)

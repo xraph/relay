@@ -2,6 +2,8 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -167,25 +169,58 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	return fromDLQEntryModel(&m)
 }
 
-// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
-// the DLQ is a log, and a marked row is what lets the service refuse a second
-// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
-// when the entry does not exist.
+// MarkReplayed claims a DLQ entry for replay. It sets replayed_at only if it
+// is not already set, and does so atomically, so of any number of concurrent
+// callers exactly one succeeds. The service calls this before it sends the
+// webhook: a claim that overwrote instead would let two replays both win and
+// both send. Returns relay.ErrAlreadyReplayed when the entry is already
+// claimed and relay.ErrDLQNotFound when it does not exist.
 //
-// The row stays in every sorted set it is already in, so no index needs
-// maintaining: only the entity's ReplayedAt changes.
+// Redis has no conditional update, so this is an optimistic transaction: WATCH
+// the entry, read it, and write only if nothing touched it in between. A
+// conflicting write makes EXEC fail and the claim retries from the read. That
+// also closes the gap the old get-then-set left open, where a Purge landing
+// between the read and the write would be undone by the write bringing the
+// deleted row back.
 func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error {
 	key := entityKey(prefixDLQ, dlqID.String())
-	var m dlqEntryModel
-	if err := s.getEntity(ctx, key, &m); err != nil {
-		if isNotFound(err) {
+	claim := func(tx *goredis.Tx) error {
+		raw, err := tx.Get(ctx, key).Bytes()
+		if errors.Is(err, goredis.Nil) {
 			return relay.ErrDLQNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var m dlqEntryModel
+		if decodeErr := json.Unmarshal(raw, &m); decodeErr != nil {
+			return fmt.Errorf("relay/redis: decode dlq entry: %w", decodeErr)
+		}
+		if m.ReplayedAt != nil {
+			return relay.ErrAlreadyReplayed
+		}
+		t := at.UTC()
+		m.ReplayedAt = &t
+		out, err := json.Marshal(&m)
+		if err != nil {
+			return fmt.Errorf("relay/redis: encode dlq entry: %w", err)
+		}
+		_, err = tx.TxPipelined(ctx, func(p goredis.Pipeliner) error {
+			p.Set(ctx, key, out, 0) // no expiry, exactly as setEntity writes it
+			return nil
+		})
+		return err
+	}
+
+	const attempts = 16
+	for i := 0; i < attempts; i++ {
+		err := s.rdb.Watch(ctx, claim, key)
+		if errors.Is(err, goredis.TxFailedErr) {
+			continue // someone wrote the entry between our read and write
 		}
 		return err
 	}
-	t := at.UTC()
-	m.ReplayedAt = &t
-	return s.setEntity(ctx, key, &m)
+	return fmt.Errorf("relay/redis: mark replayed: still contended after %d attempts", attempts)
 }
 
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {

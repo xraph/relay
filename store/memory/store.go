@@ -579,10 +579,12 @@ func (s *Store) AllDeliveries() []*delivery.Delivery {
 	return out
 }
 
-// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
-// the DLQ is a log, and a marked row is what lets the service refuse a second
-// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
-// when the entry does not exist.
+// MarkReplayed claims a DLQ entry for replay. It sets replayed_at only if it
+// is not already set, and does so atomically, so of any number of concurrent
+// callers exactly one succeeds. The service calls this before it sends the
+// webhook: a claim that overwrote instead would let two replays both win and
+// both send. Returns relay.ErrAlreadyReplayed when the entry is already
+// claimed and relay.ErrDLQNotFound when it does not exist.
 func (s *Store) MarkReplayed(_ context.Context, dlqID id.ID, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -590,6 +592,9 @@ func (s *Store) MarkReplayed(_ context.Context, dlqID id.ID, at time.Time) error
 	e, ok := s.dlqEntries[dlqID.String()]
 	if !ok {
 		return relay.ErrDLQNotFound
+	}
+	if e.ReplayedAt != nil {
+		return relay.ErrAlreadyReplayed
 	}
 	t := at.UTC()
 	e.ReplayedAt = &t

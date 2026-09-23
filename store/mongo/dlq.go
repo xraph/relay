@@ -98,27 +98,33 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 	return fromDLQEntryModel(&m)
 }
 
-// Replay marks a DLQ entry for redelivery (re-enqueues the delivery).
-// MarkReplayed records that a DLQ entry has been replayed. The row is kept:
-// the DLQ is a log, and a marked row is what lets the service refuse a second
-// replay instead of sending the webhook twice. Returns relay.ErrDLQNotFound
-// when the entry does not exist.
+// MarkReplayed claims a DLQ entry for replay. It sets replayed_at only if it
+// is not already set, and does so atomically, so of any number of concurrent
+// callers exactly one succeeds. The service calls this before it sends the
+// webhook: a claim that overwrote instead would let two replays both win and
+// both send. Returns relay.ErrAlreadyReplayed when the entry is already
+// claimed and relay.ErrDLQNotFound when it does not exist.
 //
-// MatchedCount, not ModifiedCount: re-marking a row with an identical
-// timestamp modifies nothing, but the row exists and must not read as missing.
+// A single-document update is atomic in mongo whether or not it runs as a
+// replica set, so filtering on replayed_at being null makes this a true claim.
+// {replayed_at: nil} matches both an explicit null and an absent field.
 func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error {
 	res, err := s.mdb.NewUpdate((*dlqEntryModel)(nil)).
-		Filter(bson.M{"_id": dlqID.String()}).
+		Filter(bson.M{"_id": dlqID.String(), "replayed_at": nil}).
 		Set("replayed_at", at.UTC()).
 		Set("updated_at", now()).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("relay/mongo: mark replayed: %w", err)
 	}
-	if res.MatchedCount() == 0 {
-		return relay.ErrDLQNotFound
+	if res.MatchedCount() == 1 {
+		return nil
 	}
-	return nil
+	// No match: missing, or already claimed. Look to tell which.
+	if _, getErr := s.GetDLQ(ctx, dlqID); getErr != nil {
+		return getErr
+	}
+	return relay.ErrAlreadyReplayed
 }
 
 // Purge deletes DLQ entries older than a threshold.
