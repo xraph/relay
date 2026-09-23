@@ -29,7 +29,9 @@ func (r *Relay) wireServices() {
 
 	r.endpointSvc = endpoint.NewService(r.store, r.logger)
 
-	r.dlqSvc = dlq.NewService(r.store, r.logger)
+	r.dlqSvc = dlq.NewService(r.store, r.store, dlq.Config{
+		MaxAttempts: r.config.MaxRetries,
+	}, r.logger)
 
 	r.engine = delivery.NewEngine(r.store, r.dlqSvc, delivery.EngineConfig{
 		Concurrency:     r.config.Concurrency,

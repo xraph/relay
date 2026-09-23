@@ -1,6 +1,10 @@
 package relay
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/xraph/relay/dlq"
+)
 
 // Sentinel errors returned by Relay operations.
 var (
@@ -33,6 +37,15 @@ var (
 
 	// ErrDLQNotFound is returned when a DLQ entry cannot be found.
 	ErrDLQNotFound = errors.New("relay: dlq entry not found")
+
+	// ErrAlreadyReplayed is returned when a DLQ entry that has already been
+	// replayed is replayed again. Replaying re-sends a real webhook, so the
+	// second call is refused rather than silently duplicating the delivery.
+	//
+	// It is defined in the dlq package and aliased here, because dlq is where
+	// replay happens and dlq cannot import relay without a cycle. The two
+	// names are the same value, so errors.Is works with either.
+	ErrAlreadyReplayed = dlq.ErrAlreadyReplayed
 
 	// ErrDeliveryNotFound is returned when a delivery cannot be found.
 	ErrDeliveryNotFound = errors.New("relay: delivery not found")

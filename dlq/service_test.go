@@ -19,7 +19,7 @@ func ctx() context.Context { return context.Background() }
 
 func newService() (*dlq.Service, *memory.Store) {
 	store := memory.New()
-	svc := dlq.NewService(store, nil)
+	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: 5}, nil)
 	return svc, store
 }
 
@@ -238,5 +238,32 @@ func TestPurge(t *testing.T) {
 	count, _ := svc.Count(ctx())
 	if count != 0 {
 		t.Fatalf("expected 0 after purge, got %d", count)
+	}
+}
+
+// A zero MaxAttempts is the exact value that caused the replay bug: the
+// retrier evaluates `1 < 0` and sends the delivery straight back to the DLQ.
+// So the service refuses to honour it and falls back to a sane default.
+func TestConfigDefaultsMaxAttempts(t *testing.T) {
+	store := memory.New()
+	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: 0}, nil)
+	if got := svc.MaxAttempts(); got != dlq.DefaultMaxAttempts {
+		t.Fatalf("MaxAttempts() = %d, want %d", got, dlq.DefaultMaxAttempts)
+	}
+}
+
+func TestConfigRefusesANegativeMaxAttempts(t *testing.T) {
+	store := memory.New()
+	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: -3}, nil)
+	if got := svc.MaxAttempts(); got != dlq.DefaultMaxAttempts {
+		t.Fatalf("MaxAttempts() = %d, want %d", got, dlq.DefaultMaxAttempts)
+	}
+}
+
+func TestConfigHonoursMaxAttempts(t *testing.T) {
+	store := memory.New()
+	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: 3}, nil)
+	if got := svc.MaxAttempts(); got != 3 {
+		t.Fatalf("MaxAttempts() = %d, want 3", got)
 	}
 }
