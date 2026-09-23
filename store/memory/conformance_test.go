@@ -20,3 +20,10 @@ func TestEndpointConformance(t *testing.T) {
 		return memory.New()
 	})
 }
+
+func TestEngineConformance(t *testing.T) {
+	storetest.RunEngineSuite(t, func(t *testing.T) storetest.EngineBackend {
+		t.Helper()
+		return memory.New()
+	})
+}

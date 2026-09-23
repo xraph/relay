@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/xraph/relay/dlq"
+	"github.com/xraph/relay/internal/errs"
 )
 
 // Sentinel errors returned by Relay operations.
@@ -12,7 +13,7 @@ var (
 	ErrNoStore = errors.New("relay: store is required")
 
 	// ErrEndpointNotFound is returned when an endpoint cannot be found.
-	ErrEndpointNotFound = errors.New("relay: endpoint not found")
+	ErrEndpointNotFound = errs.ErrEndpointNotFound
 
 	// ErrEventTypeNotFound is returned when an event type is not registered in the catalog.
 	ErrEventTypeNotFound = errors.New("relay: event type not found")
@@ -51,5 +52,5 @@ var (
 	ErrDeliveryNotFound = errors.New("relay: delivery not found")
 
 	// ErrEventNotFound is returned when an event cannot be found.
-	ErrEventNotFound = errors.New("relay: event not found")
+	ErrEventNotFound = errs.ErrEventNotFound
 )

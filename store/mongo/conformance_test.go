@@ -23,3 +23,11 @@ func TestEndpointConformance(t *testing.T) {
 		return openStore(t, uri)
 	})
 }
+
+func TestEngineConformance(t *testing.T) {
+	uri := startMongo(t)
+	storetest.RunEngineSuite(t, func(t *testing.T) storetest.EngineBackend {
+		t.Helper()
+		return openStore(t, uri)
+	})
+}

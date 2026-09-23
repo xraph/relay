@@ -57,3 +57,10 @@ func TestEndpointConformance(t *testing.T) {
 		return openSqliteStore(t)
 	})
 }
+
+func TestEngineConformance(t *testing.T) {
+	storetest.RunEngineSuite(t, func(t *testing.T) storetest.EngineBackend {
+		t.Helper()
+		return openSqliteStore(t)
+	})
+}

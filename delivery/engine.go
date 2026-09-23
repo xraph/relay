@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/internal/errs"
 	"github.com/xraph/relay/observability"
 )
 
@@ -182,6 +184,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		if span != nil {
 			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
 		}
+		e.release(ctx, d, err, errs.ErrEndpointNotFound, "endpoint no longer exists")
 		return
 	}
 
@@ -192,6 +195,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		if span != nil {
 			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
 		}
+		e.release(ctx, d, err, errs.ErrEventNotFound, "event no longer exists")
 		return
 	}
 
@@ -223,6 +227,11 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.Int("latency_ms", result.LatencyMs))
 
 	case Retry:
+		// Dequeue hands the engine a claimed row, and every persistent
+		// backend marks the claim in State ("delivering", or "delivered" on
+		// redis). Only pending rows are dequeued, so a retry that kept the
+		// claimed state was never attempted again.
+		d.State = StatePending
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(d.AttemptCount)
 		if e.config.Metrics != nil {
 			e.config.Metrics.RecordDelivery("retried", latencySeconds)
@@ -278,6 +287,29 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 		e.logger.Error("update delivery failed",
+			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+	}
+}
+
+// release hands back a delivery the engine claimed but could not attempt.
+// Returning without writing leaves the row claimed, and a claimed row is
+// never dequeued again.
+//
+// A missing endpoint or event will not come back, so the delivery fails.
+// Anything else is a store hiccup, so it goes back to pending for a later
+// attempt without counting one: nothing was sent.
+func (e *Engine) release(ctx context.Context, d *Delivery, err, gone error, reason string) {
+	if errors.Is(err, gone) {
+		now := time.Now().UTC()
+		d.State = StateFailed
+		d.CompletedAt = &now
+		d.LastError = reason
+	} else {
+		d.State = StatePending
+		d.NextAttemptAt = e.retrier.ComputeNextAttempt(1)
+	}
+	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
+		e.logger.Error("release delivery failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
 	}
 }
