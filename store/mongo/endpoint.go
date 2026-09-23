@@ -93,7 +93,10 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 
 	q := s.mdb.NewFind(&models).
 		Filter(filter).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
+		// created_at alone is not a total order: equal timestamps come back in an
+		// undefined order, and Offset paging then skips some endpoints and repeats
+		// others. id breaks the tie.
+		Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
 
 	if opts.Limit > 0 {
 		q = q.Limit(int64(opts.Limit))

@@ -31,10 +31,10 @@ a secret: see [Signatures](/docs/subsystems/signatures).
 | `Get(ctx, id)` | Get endpoint by ID |
 | `Update(ctx, id, input)` | Partial update |
 | `Delete(ctx, id)` | Remove endpoint |
-| `List(ctx, tenantID, opts)` | List endpoints for a tenant |
+| `List(ctx, tenantID, opts)` | List endpoints for a tenant. An empty tenant lists every tenant |
 | `SetEnabled(ctx, id, bool)` | Enable or disable |
 | `RotateSecret(ctx, id)` | Generate a new signing secret |
-| `ListUnsigned(ctx, tenantID)` | Endpoints in a tenant with no signing secret. Errors on an empty tenant |
+| `ListUnsigned(ctx, tenantID)` | Endpoints with no signing secret. An empty tenant checks every tenant |
 
 ## Secret rotation
 

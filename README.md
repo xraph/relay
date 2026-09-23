@@ -140,15 +140,15 @@ distinguished it from a real one.
 
 `Endpoints().Create` has always generated a secret when you do not supply one,
 so an endpoint reaches this state only through the store interface directly.
-To find out whether you have any, run this per tenant before upgrading:
+To find out whether you have any, run this before upgrading:
 
 ```go
-unsigned, err := r.Endpoints().ListUnsigned(ctx, "acme")
+unsigned, err := r.Endpoints().ListUnsigned(ctx, "")
 ```
 
-It matches the tenant literally and there is no way to scan every tenant, so
-you need the list of tenants you use. Rotate a secret onto whatever it returns
-with `Endpoints().RotateSecret`.
+An empty tenant checks every tenant; pass one to check just that one. It reads
+every endpoint you have, however many, so an empty result really does mean
+none. Rotate a secret onto whatever it returns with `Endpoints().RotateSecret`.
 
 Deliveries to an endpoint with no secret now fail with `endpoint has no
 signing secret` and land in the dead letter queue. They burn the whole retry

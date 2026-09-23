@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/id"
@@ -104,6 +105,62 @@ func RunEndpointSuite(t *testing.T, newStore func(t *testing.T) EndpointBackend)
 			if !ids[tc.want.ID.String()] || ids[tc.not.ID.String()] || len(got) != 1 {
 				t.Fatalf("Enabled=%v returned %d endpoints, want only the one with "+
 					"enabled=%v. A backend ignoring the filter returns both", enabled, len(got), enabled)
+			}
+		}
+	})
+
+	// Paging by Offset is only correct if the order is identical on every
+	// call. Endpoints sharing a created_at (a bulk import, or fast creation)
+	// are the adversarial case: ordered by created_at alone they can come back
+	// in a different order each call, so pages skip some and repeat others.
+	// ListUnsigned pages this way, so a wrong answer here is a wrong audit.
+	t.Run("Offset pages cover every endpoint once, even with equal created_at", func(t *testing.T) {
+		s := newStore(t)
+		tenant := uniqueTenant(t)
+		same := time.Now().UTC().Truncate(time.Second)
+		want := map[string]bool{}
+		for i := 0; i < 7; i++ {
+			ep := &endpoint.Endpoint{
+				Entity:     entity.New(),
+				ID:         id.NewEndpointID(),
+				TenantID:   tenant,
+				URL:        "https://receiver.example/hook",
+				Secret:     signature.GenerateSecret(),
+				EventTypes: []string{"*"},
+				Enabled:    true,
+			}
+			ep.CreatedAt = same
+			ep.UpdatedAt = same
+			if err := s.CreateEndpoint(context.Background(), ep); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			want[ep.ID.String()] = true
+		}
+
+		seen := map[string]int{}
+		const page = 2
+		for offset := 0; ; offset += page {
+			got, err := s.ListEndpoints(context.Background(), tenant,
+				endpoint.ListOpts{Offset: offset, Limit: page})
+			if err != nil {
+				t.Fatalf("list offset %d: %v", offset, err)
+			}
+			for _, ep := range got {
+				seen[ep.ID.String()]++
+			}
+			if len(got) < page {
+				break
+			}
+			if offset > 100 {
+				t.Fatal("paging did not terminate: Offset is being ignored")
+			}
+		}
+		for id := range want {
+			if seen[id] == 0 {
+				t.Errorf("endpoint %s was skipped by offset paging", id)
+			}
+			if seen[id] > 1 {
+				t.Errorf("endpoint %s appeared on %d pages", id, seen[id])
 			}
 		}
 	})

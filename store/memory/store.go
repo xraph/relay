@@ -247,8 +247,15 @@ func (s *Store) ListEndpoints(_ context.Context, tenantID string, opts endpoint.
 		result = append(result, ep)
 	}
 
+	// created_at alone is not a total order: equal timestamps come back in an
+	// undefined order, and Offset paging then skips some endpoints and repeats
+	// others. id breaks the tie. Ranging over the map gives a random order on every
+	// call, so without it the ties came back shuffled each time.
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.Before(result[j].CreatedAt)
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.Before(result[j].CreatedAt)
+		}
+		return result[i].ID.String() < result[j].ID.String()
 	})
 
 	result = applyPagination(result, opts.Offset, opts.Limit)

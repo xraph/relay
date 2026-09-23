@@ -128,6 +128,11 @@ func (svc *Service) SetEnabled(ctx context.Context, epID id.ID, enabled bool) er
 	return svc.store.SetEnabled(ctx, epID, enabled)
 }
 
+// unsignedPageSize is how many endpoints ListUnsigned reads per call to the
+// store. A variable so tests can page through a handful of endpoints instead of
+// creating thousands.
+var unsignedPageSize = 10000
+
 // ListUnsigned returns endpoints that have no signing secret. Deliveries to
 // these fail rather than being sent, because a signature derived from an
 // empty key verifies against that same empty key and so looks authentic to a
@@ -138,30 +143,33 @@ func (svc *Service) SetEnabled(ctx context.Context, epID id.ID, enabled bool) er
 // supplied (whitespace included), so an endpoint can only reach this state
 // through the store interface directly.
 //
-// tenantID is required and is matched literally. There is no way to scan
-// every tenant: ListEndpoints compares tenant_id for equality on all five
-// backends. An empty tenantID returns a ValidationError rather than an empty
-// list, because an empty list would read as a clean audit.
+// An empty tenantID audits every tenant. So does a tenantID of only
+// whitespace, which is no tenant at all: read literally it would match
+// nothing and report a clean audit.
 //
-// At most 10000 endpoints are examined per tenant. A tenant with more than
-// that gets a partial audit.
+// It reads every page the store has. An audit that stopped after one page
+// would report a partial result as a complete one, and across every tenant
+// one page is a real limit.
 func (svc *Service) ListUnsigned(ctx context.Context, tenantID string) ([]*Endpoint, error) {
-	// An empty tenant would match nothing and return an empty list with no
-	// error, which reads as a clean audit. Refuse it instead.
-	if strings.TrimSpace(tenantID) == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "required: ListUnsigned audits one tenant at a time"}
-	}
-	eps, err := svc.store.ListEndpoints(ctx, tenantID, ListOpts{Limit: 10000})
-	if err != nil {
-		return nil, err
-	}
+	tenant := strings.TrimSpace(tenantID)
 	out := make([]*Endpoint, 0)
-	for _, ep := range eps {
-		if strings.TrimSpace(ep.Secret) == "" {
-			out = append(out, ep)
+	for offset := 0; ; {
+		page, err := svc.store.ListEndpoints(ctx, tenant, ListOpts{Offset: offset, Limit: unsignedPageSize})
+		if err != nil {
+			return nil, err
 		}
+		for _, ep := range page {
+			if strings.TrimSpace(ep.Secret) == "" {
+				out = append(out, ep)
+			}
+		}
+		// A short page is the last one. Every backend honours Offset, which the
+		// endpoint conformance suite pins, so this cannot loop on one page.
+		if len(page) < unsignedPageSize {
+			return out, nil
+		}
+		offset += len(page)
 	}
-	return out, nil
 }
 
 // RotateSecret generates a new signing secret for an endpoint.

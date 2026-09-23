@@ -266,7 +266,10 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 	if opts.Offset > 0 {
 		q = q.Offset(opts.Offset)
 	}
-	q = q.OrderExpr("created_at ASC")
+	// created_at alone is not a total order: equal timestamps come back in an
+	// undefined order, and Offset paging then skips some endpoints and repeats
+	// others. id breaks the tie.
+	q = q.OrderExpr("created_at ASC, id ASC")
 
 	if err := q.Scan(ctx); err != nil {
 		return nil, err

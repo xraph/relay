@@ -358,21 +358,71 @@ func TestCreateReplacesAWhitespaceSecret(t *testing.T) {
 	}
 }
 
-// An empty tenant returned an empty list and a nil error, which reads as
-// "you have no unsigned endpoints". On a security audit that is the worst
-// possible wrong answer, because the operator stops looking. The plan this
-// was written from told readers to call it exactly that way.
-func TestListUnsignedRefusesAnEmptyTenant(t *testing.T) {
-	svc := newService()
+func unsignedEndpoint(t *testing.T, store *memory.Store, tenant string) *endpoint.Endpoint {
+	t.Helper()
+	ep := &endpoint.Endpoint{
+		ID:         id.NewEndpointID(),
+		TenantID:   tenant,
+		URL:        "https://unsigned.example/hook",
+		EventTypes: []string{"*"},
+		Enabled:    true,
+	}
+	if err := store.CreateEndpoint(ctx(), ep); err != nil {
+		t.Fatalf("create unsigned: %v", err)
+	}
+	return ep
+}
+
+// An empty tenant audits every tenant. It used to be refused, because
+// ListEndpoints("") returned nothing and an empty list would have read as a
+// clean result. Now that ListEndpoints("") means every tenant, refusing it
+// would only make the audit harder to run.
+func TestListUnsignedAuditsEveryTenant(t *testing.T) {
+	store := memory.New()
+	svc := endpoint.NewService(store, nil)
+	a := unsignedEndpoint(t, store, "t1")
+	b := unsignedEndpoint(t, store, "t2")
+
 	for _, tenant := range []string{"", "   "} {
 		got, err := svc.ListUnsigned(ctx(), tenant)
-		var verr *endpoint.ValidationError
-		if !errors.As(err, &verr) {
-			t.Fatalf("ListUnsigned(%q) error = %v, want a ValidationError; "+
-				"got %d rows, which reads as a clean audit", tenant, err, len(got))
+		if err != nil {
+			t.Fatalf("ListUnsigned(%q): %v", tenant, err)
 		}
-		if verr.Field != "tenant_id" {
-			t.Fatalf("ValidationError.Field = %q, want tenant_id", verr.Field)
+		seen := map[string]bool{}
+		for _, ep := range got {
+			seen[ep.ID.String()] = true
+		}
+		// A tenant of spaces is no tenant. Reading it literally would match
+		// nothing and report a clean audit, the worst possible wrong answer.
+		if !seen[a.ID.String()] || !seen[b.ID.String()] {
+			t.Fatalf("ListUnsigned(%q) did not find unsigned endpoints in both tenants "+
+				"(t1=%v t2=%v)", tenant, seen[a.ID.String()], seen[b.ID.String()])
+		}
+	}
+}
+
+// An audit that stops at one page reports a partial result as a whole one.
+// Across every tenant, one page is a real risk, so it reads until the store
+// runs out.
+func TestListUnsignedReadsPastOnePage(t *testing.T) {
+	defer endpoint.SetUnsignedPageSizeForTest(2)()
+	store := memory.New()
+	svc := endpoint.NewService(store, nil)
+
+	want := map[string]bool{}
+	for i := 0; i < 5; i++ {
+		want[unsignedEndpoint(t, store, "t1").ID.String()] = true
+	}
+	got, err := svc.ListUnsigned(ctx(), "t1")
+	if err != nil {
+		t.Fatalf("list unsigned: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("found %d of %d unsigned endpoints across pages of 2", len(got), len(want))
+	}
+	for _, ep := range got {
+		if !want[ep.ID.String()] {
+			t.Fatalf("returned an endpoint it should not have: %s", ep.ID)
 		}
 	}
 }
