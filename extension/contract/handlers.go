@@ -41,9 +41,12 @@ func mapRelayError(err error) error {
 	}
 	var verr *endpoint.ValidationError
 	if errors.As(err, &verr) {
+		// The dashboard client keeps the code and the message and drops
+		// details, so the message names the field on its own. Details stays
+		// for clients that do read it.
 		return &contract.Error{
 			Code:    contract.CodeBadRequest,
-			Message: verr.Message,
+			Message: fieldLabel(verr.Field) + ": " + verr.Message,
 			Details: map[string]any{"field": verr.Field},
 		}
 	}
@@ -51,4 +54,19 @@ func mapRelayError(err error) error {
 		return &contract.Error{Code: contract.CodeNotFound, Message: "endpoint not found"}
 	}
 	return &contract.Error{Code: contract.CodeInternal, Message: err.Error()}
+}
+
+// fieldLabel names a validation field the way the create form labels it.
+// An unknown field falls through as-is: a raw name is still better than none.
+func fieldLabel(field string) string {
+	switch field {
+	case "tenant_id":
+		return "Tenant ID"
+	case "url":
+		return "URL"
+	case "event_types":
+		return "Event types"
+	default:
+		return field
+	}
 }

@@ -280,7 +280,38 @@ func TestErrorsCarryCodesThePageCanBranchOn(t *testing.T) {
 		t.Fatalf("create without a tenant: code %q, err %v; want BAD_REQUEST", codeOf(err), err)
 	}
 	var ce *contract.Error
-	if errors.As(err, &ce) && ce.Details["field"] != "tenant_id" {
+	if !errors.As(err, &ce) {
+		t.Fatalf("create without a tenant: %T is not a *contract.Error", err)
+	}
+	if ce.Details["field"] != "tenant_id" {
 		t.Errorf("create without a tenant: details %v, want field tenant_id", ce.Details)
+	}
+}
+
+// The message is what every client renders, and the dashboard's client keeps
+// only the code and the message: details never reach the page. So the message
+// has to name the field on its own. "required" alone tells the operator that
+// something is missing and not what.
+func TestValidationMessagesNameTheirField(t *testing.T) {
+	h := newHarness(t)
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{"no tenant", map[string]any{"url": "https://a.example/hook", "eventTypes": []string{"*"}}, "Tenant ID: required"},
+		{"bad url", map[string]any{"tenantId": "t", "url": "not a url", "eventTypes": []string{"*"}}, "URL: invalid URL"},
+		{"no event types", map[string]any{"tenantId": "t", "url": "https://a.example/hook", "eventTypes": []string{}},
+			"Event types: at least one event type pattern required"},
+	}
+	for _, tc := range cases {
+		_, err := h.call(contract.KindCommand, "endpoints.create", tc.payload)
+		var ce *contract.Error
+		if !errors.As(err, &ce) {
+			t.Fatalf("%s: %v is not a *contract.Error", tc.name, err)
+		}
+		if ce.Message != tc.want {
+			t.Errorf("%s: message %q, want %q", tc.name, ce.Message, tc.want)
+		}
 	}
 }
