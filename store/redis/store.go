@@ -2,6 +2,8 @@ package redis
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,10 +37,54 @@ func New(store *kv.Store) *Store {
 	}
 }
 
+// ErrKVRewritesKeys is returned by Migrate when the kv store it was given
+// rewrites keys, as a namespace hook does. Relay's redis store reads and writes
+// some keys through the raw client and the rest through kv, and relies on both
+// meaning the same key. A store that rewrites keys breaks that without any
+// error: deletes silently do nothing, a replayed DLQ entry is never removed,
+// and replay cannot find records. Hooks that leave keys alone, such as
+// encryption and compression, are fine.
+var ErrKVRewritesKeys = errors.New(
+	"relay/redis: the kv store rewrites keys (for example a namespace hook); " +
+		"relay's redis store does not support that")
+
 // Migrate runs data migrations. Redis has no schema, so the only work is
 // backfilling indexes that newer code maintains and older code did not.
 func (s *Store) Migrate(ctx context.Context) error {
+	if err := s.checkKeysAreRaw(ctx); err != nil {
+		return err
+	}
 	return s.backfillEndpointAll(ctx)
+}
+
+// checkKeysAreRaw confirms that a key written through kv is the same key the
+// raw client sees, which the rest of this store depends on. It writes a probe
+// through kv and looks for it through the raw client.
+//
+// Only the key is compared, not the value: SetRaw never passes its value
+// through kv's hooks, so no hook can change it, and a byte comparison could
+// never fail.
+func (s *Store) checkKeysAreRaw(ctx context.Context) error {
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return fmt.Errorf("relay/redis: probe nonce: %w", err)
+	}
+	probe := "relay:probe:raw:" + hex.EncodeToString(nonce[:])
+
+	// A TTL, so the probe cleans itself up in the one case where we cannot
+	// delete it: when keys are rewritten, neither client can name it.
+	if err := s.kv.SetRaw(ctx, probe, []byte("1"), kv.WithTTL(time.Minute)); err != nil {
+		return fmt.Errorf("relay/redis: write key probe: %w", err)
+	}
+	seen, err := s.rdb.Exists(ctx, probe).Result()
+	if err != nil {
+		return fmt.Errorf("relay/redis: read key probe: %w", err)
+	}
+	if seen == 0 {
+		return ErrKVRewritesKeys
+	}
+	_ = s.rdb.Del(ctx, probe).Err() //nolint:errcheck // best-effort: the probe expires on its own
+	return nil
 }
 
 // backfillEndpointAll copies every endpoint into zEndpointAll, the index an

@@ -269,38 +269,69 @@ func TestEveryTenantListDropsIDsWhoseRecordIsGone(t *testing.T) {
 	}
 }
 
-// Under a kv namespace hook, endpoint records live at "<ns>:relay:ep:<id>",
-// while relay's index keys go through the raw client and stay un-namespaced.
-// The old backfill SCANned for relay:ep:* raw, found nothing, and set its
-// marker anyway, so every pre-upgrade endpoint went missing. Building the
-// index from the per-tenant index keys uses the same path they were written
-// on, so it works either way.
-func TestBackfillWorksUnderANamespace(t *testing.T) {
-	ctx := context.Background()
-	connStr := startRedis(t)
+func openHookedRedisStore(t *testing.T, connStr string, h any) *redisstore.Store {
+	t.Helper()
 	drv := redisdriver.New()
-	if err := drv.Open(ctx, connStr); err != nil {
+	if err := drv.Open(context.Background(), connStr); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	kvs, err := kv.Open(drv, kv.WithHook(middleware.NewNamespace("app1")))
+	kvs, err := kv.Open(drv, kv.WithHook(h))
 	if err != nil {
 		t.Fatalf("kv open: %v", err)
 	}
 	t.Cleanup(func() { _ = kvs.Close() })
-	s := redisstore.New(kvs)
-	raw := rawRedis(t, connStr)
+	return redisstore.New(kvs)
+}
 
-	ep := createEndpoint(t, s, "tenant-namespaced")
-	if err := raw.ZRem(ctx, keyEndpointAll, ep.ID.String()).Err(); err != nil {
-		t.Fatalf("zrem: %v", err)
+// Relay's redis store reads and writes some keys through the raw client and
+// the rest through kv, and relies on both meaning the same key. A kv hook that
+// rewrites keys breaks that silently: under a namespace, deletes became no-ops
+// (a "deleted" endpoint kept its record and secret), a replayed DLQ record was
+// never removed so a second replay double-sent, and the replay claim could not
+// find any record at all. So Migrate refuses such a store, once, at startup.
+func TestMigrateRefusesAStoreThatRewritesKeys(t *testing.T) {
+	connStr := startRedis(t)
+	s := openHookedRedisStore(t, connStr, middleware.NewNamespace("app1"))
+	if err := s.Migrate(context.Background()); !errors.Is(err, redisstore.ErrKVRewritesKeys) {
+		t.Fatalf("Migrate on a namespaced store: err = %v, want ErrKVRewritesKeys", err)
 	}
-	if err := raw.Del(ctx, keyBackfilled, keyIndexBuilt).Err(); err != nil {
-		t.Fatalf("del markers: %v", err)
+}
+
+// The refusal must not catch hooks that leave keys alone. SetRaw does not pass
+// its value through the hooks, so encryption and compression leave a raw
+// record exactly as relay wrote it, and relay works with them. Measured, not
+// assumed: both were probed against a real redis before this was written.
+func TestMigrateAcceptsHooksThatLeaveKeysAlone(t *testing.T) {
+	connStr := startRedis(t)
+	enc, err := middleware.NewEncrypt([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("encrypt hook: %v", err)
 	}
+	for name, h := range map[string]any{
+		"encrypt":  enc,
+		"compress": middleware.NewCompress(middleware.CompressionAlgorithm(0), 1),
+	} {
+		s := openHookedRedisStore(t, connStr, h)
+		if err := s.Migrate(context.Background()); err != nil {
+			t.Fatalf("Migrate refused a store with a %s hook, which relay works with: %v", name, err)
+		}
+	}
+}
+
+// The check writes a probe key; on a store relay supports it must not leave it.
+func TestMigrateLeavesNoProbeKeyBehind(t *testing.T) {
+	ctx := context.Background()
+	connStr := startRedis(t)
+	s := openRedisStore(t, connStr)
+	raw := rawRedis(t, connStr)
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if !listsAll(t, s, ep.ID) {
-		t.Fatal("under a namespace, Migrate did not backfill a pre-upgrade endpoint")
+	left, err := raw.Keys(ctx, "relay:probe:*").Result()
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("Migrate left probe keys behind: %v", left)
 	}
 }

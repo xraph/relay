@@ -109,6 +109,34 @@ from it until the backfill runs again, which happens within a day of
 redeploying. To repair it straight away, delete `relay:migrated:ep_all:v1` and
 restart, or call `Migrate()`.
 
+## Key-rewriting kv hooks are not supported
+
+Pass `redisstore.New` a kv store without a namespace hook, or any other hook
+that rewrites keys.
+
+The store reads and writes some keys through the raw go-redis client (every
+sorted-set and set index, and the replay claim) and the rest through kv (the
+records). That only works if both clients mean the same key by the same name.
+A namespace hook moves the records under a prefix the raw client never sees,
+and nothing errors. Instead:
+
+- deleting an endpoint leaves its record, secret included, in redis;
+- a replayed DLQ entry's record is never removed;
+- replay cannot find any record, and answers "dlq entry not found";
+- two relays sharing one redis still collide on every index key, so the
+  namespace does not isolate them anyway.
+
+`Migrate()` checks for this first. It writes a probe key through kv and looks
+for it through the raw client, and returns `ErrKVRewritesKeys` if it isn't
+there. The probe carries a one-minute TTL, so it cleans itself up even then.
+
+Hooks that leave keys alone are fine. `SetRaw` never passes its value through
+kv's hooks, so encryption and compression leave records exactly as relay wrote
+them. Both were checked against a real redis.
+
+If you set `DisableMigrate`, this check does not run, so the store will not
+catch a namespaced kv store for you.
+
 ## Internals
 
 | Aspect | Detail |
