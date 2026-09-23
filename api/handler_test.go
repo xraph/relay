@@ -26,7 +26,7 @@ func testServer(t *testing.T) *httptest.Server {
 	logger := log.NewNoopLogger()
 	cat := catalog.NewCatalog(s, catalog.Config{}, logger)
 	epSvc := endpoint.NewService(s, logger)
-	dlqSvc := dlq.NewService(s, logger)
+	dlqSvc := dlq.NewService(s, s, dlq.Config{MaxAttempts: 5}, logger)
 
 	h := api.NewHandler(s, cat, epSvc, dlqSvc, logger)
 	return httptest.NewServer(h)
