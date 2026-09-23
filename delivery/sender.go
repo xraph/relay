@@ -48,9 +48,16 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 	req.Header.Set("X-Relay-Event-Type", evt.Type)
 	req.Header.Set("X-Relay-Delivery-ID", d.ID.String())
 
-	// HMAC signature.
+	// HMAC signature. An endpoint with no secret is not delivered to at all:
+	// an unsigned delivery cannot be authenticated by the receiver, and one
+	// signed with an absent key is worse, because HMAC produces a well-formed
+	// digest from an empty key that verifies against the same empty key. That
+	// looks authentic to a receiver doing everything right.
 	ts := time.Now().Unix()
-	sig := signature.Sign(body, ep.Secret, ts)
+	sig, sigErr := signature.Sign(body, ep.Secret, ts)
+	if sigErr != nil {
+		return Result{Error: fmt.Sprintf("endpoint has no signing secret: %v", sigErr)}
+	}
 	req.Header.Set("X-Relay-Signature", sig)
 	req.Header.Set("X-Relay-Timestamp", strconv.FormatInt(ts, 10))
 

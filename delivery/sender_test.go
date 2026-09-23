@@ -246,3 +246,62 @@ func TestSenderServerError(t *testing.T) {
 		t.Fatalf("unexpected response: %s", result.Response)
 	}
 }
+
+// An endpoint with no signing secret must not receive the delivery at all.
+//
+// Before this, Sign returned a well-formed signature computed with the empty
+// string as the key, the request went out carrying it, and a receiver
+// verifying against the same empty secret accepted it. Sending nothing is
+// correct: an unsigned delivery cannot be authenticated, and one signed with
+// an absent key is worse because it looks authentic.
+func TestSenderRefusesAnEndpointWithNoSecret(t *testing.T) {
+	var reached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ep := newTestEndpoint(srv.URL)
+	ep.Secret = ""
+	evt := newTestEvent()
+	d := newTestDelivery(ep.ID, evt.ID)
+
+	res := delivery.NewSender(5 * time.Second).Send(context.Background(), ep, evt, d)
+
+	if reached {
+		t.Fatal("the request reached the receiver despite the endpoint having no secret")
+	}
+	if res.StatusCode != 0 {
+		t.Fatalf("StatusCode = %d, want 0", res.StatusCode)
+	}
+	// This string lands in Delivery.LastError and then in the DLQ entry. It
+	// is the only thing telling an operator that this endpoint is
+	// misconfigured rather than unreachable.
+	if !strings.Contains(res.Error, "signing secret") {
+		t.Fatalf("Error = %q, want it to name the missing signing secret", res.Error)
+	}
+}
+
+func TestSenderRefusesAWhitespaceSecret(t *testing.T) {
+	var reached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ep := newTestEndpoint(srv.URL)
+	ep.Secret = "   "
+	evt := newTestEvent()
+	d := newTestDelivery(ep.ID, evt.ID)
+
+	res := delivery.NewSender(5 * time.Second).Send(context.Background(), ep, evt, d)
+
+	if reached {
+		t.Fatal("the request reached the receiver with a whitespace secret")
+	}
+	if !strings.Contains(res.Error, "signing secret") {
+		t.Fatalf("Error = %q, want it to name the missing signing secret", res.Error)
+	}
+}
