@@ -420,3 +420,70 @@ func TestEngineWakeDeliversPromptly(t *testing.T) {
 		}
 	}
 }
+
+// The endpoint's RateLimit is documented as deliveries per second and the
+// dashboard lets you set it. The limiter existed and nothing called it.
+func TestEngineHonoursTheEndpointRateLimit(t *testing.T) {
+	var calls atomic.Int32
+	store, engine, srv := setupEngine(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}), nil)
+	defer srv.Close()
+
+	ep, first := createTestData(t, store, srv.URL)
+	ep.RateLimit = 1
+	if err := store.UpdateEndpoint(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+	queued := make([]*delivery.Delivery, 0, 3)
+	queued = append(queued, first)
+	for range 2 {
+		d := &delivery.Delivery{Entity: entity.New(), ID: id.NewDeliveryID(), EventID: first.EventID,
+			EndpointID: ep.ID, State: delivery.StatePending, MaxAttempts: 3, NextAttemptAt: time.Now().UTC()}
+		if err := store.Enqueue(context.Background(), d); err != nil {
+			t.Fatal(err)
+		}
+		queued = append(queued, d)
+	}
+
+	started := time.Now()
+	engine.Start(context.Background())
+	defer engine.Stop(context.Background())
+
+	// The bucket starts full at one token: one request, then one a second.
+	time.Sleep(400 * time.Millisecond)
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("receiver saw %d requests in the first 400ms, want 1", n)
+	}
+	waiting := 0
+	for _, d := range queued {
+		got, err := store.GetDelivery(context.Background(), d.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State == delivery.StatePending {
+			waiting++
+			if got.AttemptCount != 0 {
+				t.Errorf("a delivery held back by the rate limit counts %d attempts, want 0", got.AttemptCount)
+			}
+		}
+	}
+	if waiting != 2 {
+		t.Errorf("%d deliveries waiting on the rate limit, want 2", waiting)
+	}
+
+	// All three still go, a second apart. How soon after its token each
+	// one goes depends on the idle poll backoff, so this checks the floor
+	// the limit sets, not an exact schedule.
+	deadline := time.Now().Add(8 * time.Second)
+	for calls.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := calls.Load(); n != 3 {
+		t.Fatalf("receiver saw %d requests, want all 3 eventually", n)
+	}
+	if elapsed := time.Since(started); elapsed < 1800*time.Millisecond {
+		t.Errorf("three deliveries at 1/s finished in %v, want at least ~2s", elapsed)
+	}
+}

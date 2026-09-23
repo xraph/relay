@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/errs"
 	"github.com/xraph/relay/observability"
+	"github.com/xraph/relay/ratelimit"
 )
 
 // EngineStore is the interface the engine needs for delivery operations.
@@ -51,6 +52,7 @@ type Engine struct {
 	sender  *Sender
 	retrier *Retrier
 	dlq     DLQPusher
+	limiter *ratelimit.Limiter
 	config  EngineConfig
 	logger  log.Logger
 
@@ -75,6 +77,7 @@ func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Lo
 		sender:  NewSender(cfg.RequestTimeout),
 		retrier: NewRetrier(cfg.RetrySchedule),
 		dlq:     dlq,
+		limiter: ratelimit.New(),
 		config:  cfg,
 		logger:  logger,
 		wakeCh:  make(chan struct{}, 1),
@@ -196,6 +199,21 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
 		}
 		e.release(ctx, d, err, errs.ErrEventNotFound, "event no longer exists")
+		return
+	}
+
+	// Held back by the endpoint's rate limit: back in the queue for when a
+	// token is due, and no attempt counted, because nothing was sent.
+	if !e.limiter.Allow(ep.ID.String(), ep.RateLimit) {
+		d.State = StatePending
+		d.NextAttemptAt = time.Now().UTC().Add(time.Second / time.Duration(ep.RateLimit))
+		if span != nil {
+			e.config.Tracer.EndDeliverySpan(span, 0, 0, "rate limited")
+		}
+		if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
+			e.logger.Error("defer rate-limited delivery failed",
+				log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+		}
 		return
 	}
 
