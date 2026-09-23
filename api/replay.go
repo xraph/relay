@@ -38,6 +38,10 @@ func (h *Handler) replayDLQ(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "DLQ entry not found")
 			return
 		}
+		if errors.Is(replayErr, relay.ErrAlreadyReplayed) {
+			writeError(w, http.StatusConflict, "DLQ entry already replayed")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, replayErr.Error())
 		return
 	}

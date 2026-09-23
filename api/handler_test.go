@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	log "github.com/xraph/go-utils/log"
 
@@ -15,11 +16,21 @@ import (
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
+	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/internal/entity"
 	"github.com/xraph/relay/store/memory"
 )
 
 // testServer creates a Handler backed by a memory store and returns the test server.
 func testServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv, _ := testServerWithStore(t)
+	return srv
+}
+
+// testServerWithStore is testServer, also returning the store so a test can
+// seed state the HTTP API has no route to create, such as a DLQ entry.
+func testServerWithStore(t *testing.T) (*httptest.Server, *memory.Store) {
 	t.Helper()
 
 	s := memory.New()
@@ -29,7 +40,7 @@ func testServer(t *testing.T) *httptest.Server {
 	dlqSvc := dlq.NewService(s, s, dlq.Config{MaxAttempts: 5}, logger)
 
 	h := api.NewHandler(s, cat, epSvc, dlqSvc, logger)
-	return httptest.NewServer(h)
+	return httptest.NewServer(h), s
 }
 
 func doJSON(t *testing.T, method, url string, body any) *http.Response {
@@ -421,4 +432,40 @@ func TestEvent_InvalidID(t *testing.T) {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// Replaying sends a real webhook, so a second replay of one entry is refused.
+// The refusal is a 409: the entry is already in the state the request asks
+// for. It used to be a 500, which reads as "try again" when trying again
+// cannot work.
+func TestDLQ_ReplayTwiceIsConflict(t *testing.T) {
+	srv, store := testServerWithStore(t)
+	defer srv.Close()
+
+	entry := &dlq.Entry{
+		Entity:     entity.New(),
+		ID:         id.NewDLQID(),
+		DeliveryID: id.NewDeliveryID(),
+		EventID:    id.NewEventID(),
+		EndpointID: id.NewEndpointID(),
+		EventType:  "invoice.created",
+		TenantID:   "tenant-1",
+		URL:        "https://receiver.example/hook",
+		FailedAt:   time.Now().UTC(),
+	}
+	if err := store.Push(context.Background(), entry); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	url := srv.URL + "/dlq/" + entry.ID.String() + "/replay"
+
+	first := doJSON(t, "POST", url, nil)
+	_ = first.Body.Close()
+	if first.StatusCode != http.StatusNoContent {
+		t.Fatalf("first replay: status %d, want 204", first.StatusCode)
+	}
+	second := doJSON(t, "POST", url, nil)
+	_ = second.Body.Close()
+	if second.StatusCode != http.StatusConflict {
+		t.Fatalf("second replay: status %d, want 409", second.StatusCode)
+	}
 }

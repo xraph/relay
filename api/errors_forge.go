@@ -28,6 +28,10 @@ func mapError(err error) error {
 		return forge.BadRequest(err.Error())
 	case errors.Is(err, relay.ErrDuplicateIdempotencyKey):
 		return forge.NewHTTPError(http.StatusConflict, err.Error())
+	case errors.Is(err, relay.ErrAlreadyReplayed):
+		// The entry is already in the state the request asks for, and a retry
+		// cannot change that. 500 would tell the caller to try again.
+		return forge.NewHTTPError(http.StatusConflict, err.Error())
 	case errors.Is(err, relay.ErrEndpointDisabled):
 		return forge.NewHTTPError(http.StatusConflict, err.Error())
 	case errors.Is(err, relay.ErrNoStore):
