@@ -147,9 +147,39 @@ func (svc *Service) Replay(ctx context.Context, dlqID id.ID) error {
 	return nil
 }
 
-// ReplayBulk re-enqueues all DLQ entries within a time range.
+// ReplayBulk re-enqueues every un-replayed DLQ entry that failed inside the
+// window. Entries already replayed are skipped, so calling it twice over the
+// same window does not send every webhook in it twice.
+//
+// It returns the number replayed. A failure partway through returns the count
+// achieved so far along with the error: those deliveries have been enqueued
+// and will be sent, and the caller needs to know how many.
+//
+// The window is on failed_at, as it always was: ListDLQ filters From and To on
+// that column on every backend. A zero Limit means every matching entry on
+// every backend, so the window is never silently truncated to a page.
 func (svc *Service) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
-	return svc.store.ReplayBulk(ctx, from, to)
+	entries, err := svc.store.ListDLQ(ctx, ListOpts{From: &from, To: &to})
+	if err != nil {
+		return 0, err
+	}
+
+	var count int64
+	for _, e := range entries {
+		if e.ReplayedAt != nil {
+			continue
+		}
+		if err := svc.Replay(ctx, e.ID); err != nil {
+			// Another caller replayed it between the list and now. Not a
+			// failure: it was sent once, which is the point.
+			if errors.Is(err, ErrAlreadyReplayed) {
+				continue
+			}
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
 
 // Purge removes old DLQ entries.

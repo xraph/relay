@@ -764,30 +764,6 @@ func TestDLQMarkReplayed(t *testing.T) {
 	}
 }
 
-func TestDLQReplayBulk(t *testing.T) {
-	s := New()
-
-	_ = s.Push(ctx(), newDLQEntry(id.NewEventID(), id.NewEndpointID()))
-	_ = s.Push(ctx(), newDLQEntry(id.NewEventID(), id.NewEndpointID()))
-
-	from := time.Now().Add(-time.Hour)
-	to := time.Now().Add(time.Hour)
-
-	count, err := s.ReplayBulk(ctx(), from, to)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 2 {
-		t.Fatalf("expected 2, got %d", count)
-	}
-
-	// Replaying again should return 0 (already replayed)
-	count, _ = s.ReplayBulk(ctx(), from, to)
-	if count != 0 {
-		t.Fatalf("expected 0 on second replay, got %d", count)
-	}
-}
-
 func TestDLQPurge(t *testing.T) {
 	s := New()
 

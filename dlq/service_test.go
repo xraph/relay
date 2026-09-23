@@ -370,3 +370,72 @@ func TestReplayMissingEntry(t *testing.T) {
 		t.Fatalf("error = %v, want ErrDLQNotFound", err)
 	}
 }
+
+// Bulk replay takes the same budget from config as single replay. 7 is
+// deliberate: the old memory ReplayBulk hardcoded 5 and the other backends left
+// it at 0, so only a value neither could produce proves the budget is read.
+func TestReplayBulkUsesTheConfiguredBudget(t *testing.T) {
+	store := memory.New()
+	svc := dlq.NewService(store, store, dlq.Config{MaxAttempts: 7}, nil)
+	seedEntry(t, store)
+	seedEntry(t, store)
+
+	n, err := svc.ReplayBulk(ctx(), time.Now().UTC().Add(-24*time.Hour), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("replay bulk: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("replayed %d, want 2", n)
+	}
+	for _, d := range store.AllDeliveries() {
+		if d.MaxAttempts != 7 {
+			t.Fatalf("a bulk-replayed delivery has MaxAttempts = %d, want 7 from config", d.MaxAttempts)
+		}
+	}
+}
+
+func TestReplayBulkSkipsAlreadyReplayed(t *testing.T) {
+	svc, store := newService()
+	a := seedEntry(t, store)
+	seedEntry(t, store)
+
+	if err := svc.Replay(ctx(), a.ID); err != nil {
+		t.Fatalf("seed replay: %v", err)
+	}
+
+	n, err := svc.ReplayBulk(ctx(), time.Now().UTC().Add(-24*time.Hour), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("replay bulk: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("replayed %d, want 1: the already-replayed entry must be skipped", n)
+	}
+	if got := len(store.AllDeliveries()); got != 2 {
+		t.Fatalf("got %d deliveries, want 2 (one per entry, none twice)", got)
+	}
+}
+
+// Calling bulk replay twice over the same window must not re-send every
+// webhook in it. The old real backends only got this right by accident: they
+// deleted the rows, so the second call found nothing left to send.
+func TestReplayBulkTwiceSendsNothingTheSecondTime(t *testing.T) {
+	svc, store := newService()
+	seedEntry(t, store)
+	seedEntry(t, store)
+
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := time.Now().UTC()
+	if _, err := svc.ReplayBulk(ctx(), from, to); err != nil {
+		t.Fatalf("first bulk: %v", err)
+	}
+	n, err := svc.ReplayBulk(ctx(), from, to)
+	if err != nil {
+		t.Fatalf("second bulk: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("second bulk replayed %d, want 0", n)
+	}
+	if got := len(store.AllDeliveries()); got != 2 {
+		t.Fatalf("got %d deliveries, want 2: a second bulk must not re-send", got)
+	}
+}

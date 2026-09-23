@@ -26,9 +26,6 @@ type Store interface {
 	// place that can see the configured retry budget.
 	MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error
 
-	// ReplayBulk replays all DLQ entries in a time window.
-	ReplayBulk(ctx context.Context, from, to time.Time) (int64, error)
-
 	// Purge deletes DLQ entries older than a threshold.
 	Purge(ctx context.Context, before time.Time) (int64, error)
 

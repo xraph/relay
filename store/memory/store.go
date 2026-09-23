@@ -596,40 +596,6 @@ func (s *Store) MarkReplayed(_ context.Context, dlqID id.ID, at time.Time) error
 	return nil
 }
 
-// ReplayBulk replays all DLQ entries in a time window.
-func (s *Store) ReplayBulk(_ context.Context, from, to time.Time) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now().UTC()
-	var count int64
-
-	for _, e := range s.dlqEntries {
-		if e.FailedAt.Before(from) || e.FailedAt.After(to) {
-			continue
-		}
-		if e.ReplayedAt != nil {
-			continue
-		}
-
-		e.ReplayedAt = &now
-
-		d := &delivery.Delivery{
-			Entity:        relay.NewEntity(),
-			ID:            id.NewDeliveryID(),
-			EventID:       e.EventID,
-			EndpointID:    e.EndpointID,
-			State:         delivery.StatePending,
-			AttemptCount:  0,
-			MaxAttempts:   5,
-			NextAttemptAt: now,
-		}
-		s.deliveries[d.ID.String()] = d
-		count++
-	}
-	return count, nil
-}
-
 // Purge deletes DLQ entries older than a threshold.
 func (s *Store) Purge(_ context.Context, before time.Time) (int64, error) {
 	s.mu.Lock()

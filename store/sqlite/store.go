@@ -18,7 +18,6 @@ import (
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
-	"github.com/xraph/relay/internal/entity"
 	relaystore "github.com/xraph/relay/store"
 )
 
@@ -634,44 +633,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 		return relay.ErrDLQNotFound
 	}
 	return nil
-}
-
-func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
-	var models []dlqEntryModel
-	if err := s.sdb.NewSelect(&models).
-		Where("failed_at >= ?", from).
-		Where("failed_at <= ?", to).
-		Scan(ctx); err != nil {
-		return 0, err
-	}
-
-	var count int64
-	for i := range models {
-		entry, err := fromDLQEntryModel(&models[i])
-		if err != nil {
-			return count, err
-		}
-		d := &delivery.Delivery{
-			Entity:        entity.New(),
-			ID:            id.NewDeliveryID(),
-			EventID:       entry.EventID,
-			EndpointID:    entry.EndpointID,
-			State:         delivery.StatePending,
-			NextAttemptAt: now(),
-		}
-
-		if err := s.Enqueue(ctx, d); err != nil {
-			return count, err
-		}
-
-		if _, err := s.sdb.NewDelete((*dlqEntryModel)(nil)).
-			Where("id = ?", models[i].ID).
-			Exec(ctx); err != nil {
-			return count, err
-		}
-		count++
-	}
-	return count, nil
 }
 
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {

@@ -197,6 +197,43 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 		}
 	})
 
+	// Bulk replay selects its window through ListDLQ, so on a real backend its
+	// correctness rests entirely on this filter. Every backend is meant to
+	// filter From and To on failed_at, the column bulk replay always used.
+	t.Run("ListDLQ selects a window on failed_at", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		tenant := uniqueTenant(t)
+		now := time.Now().UTC()
+
+		old := NewEntry()
+		old.TenantID = tenant
+		old.FailedAt = now.Add(-3 * time.Hour)
+		recent := NewEntry()
+		recent.TenantID = tenant
+		recent.FailedAt = now.Add(-1 * time.Hour)
+		for _, e := range []*dlq.Entry{old, recent} {
+			if err := s.Push(ctx, e); err != nil {
+				t.Fatalf("push: %v", err)
+			}
+		}
+
+		from := now.Add(-2 * time.Hour)
+		got, err := s.ListDLQ(ctx, dlq.ListOpts{TenantID: tenant, From: &from, To: &now})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != recent.ID {
+			ids := make([]string, 0, len(got))
+			for _, e := range got {
+				ids = append(ids, e.ID.String())
+			}
+			t.Fatalf("a window of the last 2h returned %v, want only the entry "+
+				"that failed 1h ago (%s). A backend filtering on the wrong column "+
+				"makes bulk replay send the wrong webhooks", ids, recent.ID)
+		}
+	})
+
 	t.Run("MarkReplayed on a missing row reports not found", func(t *testing.T) {
 		ctx := context.Background()
 		s := newStore(t)

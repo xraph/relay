@@ -660,46 +660,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	return nil
 }
 
-func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
-	var models []dlqEntryModel
-	if err := s.pg.NewSelect(&models).
-		Where("failed_at >= $1", from).
-		Where("failed_at <= $2", to).
-		Scan(ctx); err != nil {
-		return 0, err
-	}
-
-	var count int64
-	for i := range models {
-		entry, err := fromDLQEntryModel(&models[i])
-		if err != nil {
-			return count, err
-		}
-		d := &delivery.Delivery{
-			ID:            id.NewDeliveryID(),
-			EventID:       entry.EventID,
-			EndpointID:    entry.EndpointID,
-			State:         delivery.StatePending,
-			NextAttemptAt: time.Now().UTC(),
-		}
-		d.CreatedAt = time.Now().UTC()
-		d.UpdatedAt = d.CreatedAt
-
-		if err := s.Enqueue(ctx, d); err != nil {
-			return count, err
-		}
-
-		if _, err := s.pg.NewDelete((*dlqEntryModel)(nil)).
-			Where("id = $1", models[i].ID).
-			Exec(ctx); err != nil {
-			return count, err
-		}
-		count++
-	}
-
-	return count, nil
-}
-
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.pg.NewDelete((*dlqEntryModel)(nil)).
 		Where("failed_at < $1", before).

@@ -9,7 +9,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	relay "github.com/xraph/relay"
-	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/entity"
@@ -187,53 +186,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 	t := at.UTC()
 	m.ReplayedAt = &t
 	return s.setEntity(ctx, key, &m)
-}
-
-func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
-	minScore := scoreFromTime(from)
-	maxScore := scoreFromTime(to)
-
-	ids, err := s.zRangeByScoreIDs(ctx, zDLQAll, minScore, maxScore)
-	if err != nil {
-		return 0, fmt.Errorf("relay/redis: replay bulk list: %w", err)
-	}
-
-	var count int64
-	for _, entryID := range ids {
-		var m dlqEntryModel
-		if err := s.getEntity(ctx, entityKey(prefixDLQ, entryID), &m); err != nil {
-			if isNotFound(err) {
-				continue
-			}
-			return count, err
-		}
-
-		entry, err := fromDLQEntryModel(&m)
-		if err != nil {
-			return count, err
-		}
-
-		d := &delivery.Delivery{
-			ID:            id.NewDeliveryID(),
-			EventID:       entry.EventID,
-			EndpointID:    entry.EndpointID,
-			State:         delivery.StatePending,
-			NextAttemptAt: now(),
-		}
-		d.CreatedAt = now()
-		d.UpdatedAt = d.CreatedAt
-
-		if enqueueErr := s.Enqueue(ctx, d); enqueueErr != nil {
-			return count, enqueueErr
-		}
-
-		if err := s.deleteDLQEntry(ctx, entryID, m.TenantID, m.EndpointID); err != nil {
-			return count, err
-		}
-		count++
-	}
-
-	return count, nil
 }
 
 func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {

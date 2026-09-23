@@ -8,10 +8,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	relay "github.com/xraph/relay"
-	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/id"
-	"github.com/xraph/relay/internal/entity"
 )
 
 // Push moves a permanently failed delivery into the DLQ.
@@ -121,56 +119,6 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 		return relay.ErrDLQNotFound
 	}
 	return nil
-}
-
-// ReplayBulk replays all DLQ entries in a time window.
-func (s *Store) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
-	var models []dlqEntryModel
-
-	if err := s.mdb.NewFind(&models).
-		Filter(bson.M{
-			"failed_at": bson.M{
-				"$gte": from,
-				"$lte": to,
-			},
-		}).
-		Scan(ctx); err != nil {
-		return 0, fmt.Errorf("relay/mongo: replay bulk find: %w", err)
-	}
-
-	var count int64
-	t := now()
-
-	for i := range models {
-		entry, err := fromDLQEntryModel(&models[i])
-		if err != nil {
-			return count, err
-		}
-
-		d := &delivery.Delivery{
-			Entity:        entity.New(),
-			ID:            id.NewDeliveryID(),
-			EventID:       entry.EventID,
-			EndpointID:    entry.EndpointID,
-			State:         delivery.StatePending,
-			MaxAttempts:   entry.AttemptCount,
-			NextAttemptAt: t,
-		}
-
-		if err := s.Enqueue(ctx, d); err != nil {
-			return count, fmt.Errorf("relay/mongo: replay bulk enqueue: %w", err)
-		}
-
-		if _, err := s.mdb.NewDelete((*dlqEntryModel)(nil)).
-			Filter(bson.M{"_id": models[i].ID}).
-			Exec(ctx); err != nil {
-			return count, fmt.Errorf("relay/mongo: replay bulk delete: %w", err)
-		}
-
-		count++
-	}
-
-	return count, nil
 }
 
 // Purge deletes DLQ entries older than a threshold.
