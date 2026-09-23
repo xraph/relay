@@ -1,0 +1,29 @@
+schemaVersion: 1
+contributor:
+  name: relay
+  envelope:
+    supports: [v1]
+    preferred: v1
+  capabilities: [relay.read, relay.write]
+
+# Endpoints are the webhook delivery targets a tenant registers. This is the
+# first Relay surface on the React shell and deliberately the simplest one: it
+# needs no change to the Go domain, so it proves the pipeline rather than the
+# storage layer.
+intents:
+  - { name: endpoints.list,         kind: query,   version: 1, capability: read  }
+  - { name: endpoints.detail,       kind: query,   version: 1, capability: read  }
+  - { name: endpoints.resolve,      kind: query,   version: 1, capability: read  }
+  - { name: endpoints.create,       kind: command, version: 1, capability: write, invalidates: [endpoints.list] }
+  - { name: endpoints.update,       kind: command, version: 1, capability: write, invalidates: [endpoints.list, endpoints.detail] }
+  - { name: endpoints.delete,       kind: command, version: 1, capability: write, invalidates: [endpoints.list] }
+  - { name: endpoints.setEnabled,   kind: command, version: 1, capability: write, invalidates: [endpoints.list, endpoints.detail] }
+  - { name: endpoints.rotateSecret, kind: command, version: 1, capability: write, invalidates: [endpoints.list, endpoints.detail] }
+
+queries:
+  endpointList:
+    intent: endpoints.list
+    cache: { staleTime: 30s }
+  endpointDetail:
+    intent: endpoints.detail
+    cache: { staleTime: 30s }
