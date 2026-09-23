@@ -35,8 +35,72 @@ func New(store *kv.Store) *Store {
 }
 
 // Migrate is a no-op for Redis (no schema migrations needed).
-func (s *Store) Migrate(_ context.Context) error {
-	return nil
+// Migrate runs one-time data migrations. Redis has no schema, so the only work
+// is backfilling indexes that newer code maintains and older code did not.
+// Each migration checks a marker first, so a normal boot does no scanning.
+func (s *Store) Migrate(ctx context.Context) error {
+	return s.backfillEndpointAll(ctx)
+}
+
+// backfillEndpointAll adds every existing endpoint to zEndpointAll. Endpoints
+// created before that index existed are only in their per-tenant index, so
+// without this an every-tenant listing would silently omit all of them.
+//
+// ZADD is idempotent, so a run that dies partway is safe to repeat; the marker
+// is written only after the scan completes. On a cluster it scans every master,
+// since a plain SCAN walks a single node and would miss most keys.
+func (s *Store) backfillEndpointAll(ctx context.Context) error {
+	done, err := s.rdb.Exists(ctx, migratedEndpointAllV1).Result()
+	if err != nil {
+		return fmt.Errorf("relay/redis: check endpoint backfill marker: %w", err)
+	}
+	if done == 1 {
+		return nil
+	}
+
+	index := func(ctx context.Context, node goredis.UniversalClient) error {
+		var cursor uint64
+		for {
+			keys, next, scanErr := node.Scan(ctx, cursor, prefixEndpoint+"*", 500).Result()
+			if scanErr != nil {
+				return fmt.Errorf("relay/redis: scan endpoints: %w", scanErr)
+			}
+			queued := 0
+			pipe := s.rdb.Pipeline()
+			for _, key := range keys {
+				var m endpointModel
+				if getErr := s.getEntity(ctx, key, &m); getErr != nil {
+					if isNotFound(getErr) {
+						continue // deleted since the scan saw it
+					}
+					return fmt.Errorf("relay/redis: read endpoint %s: %w", key, getErr)
+				}
+				pipe.ZAdd(ctx, zEndpointAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+				queued++
+			}
+			if queued > 0 {
+				if _, execErr := pipe.Exec(ctx); execErr != nil {
+					return fmt.Errorf("relay/redis: backfill endpoint index: %w", execErr)
+				}
+			}
+			cursor = next
+			if cursor == 0 {
+				return nil
+			}
+		}
+	}
+
+	if cluster, ok := s.rdb.(*goredis.ClusterClient); ok {
+		err = cluster.ForEachMaster(ctx, func(ctx context.Context, node *goredis.Client) error {
+			return index(ctx, node)
+		})
+	} else {
+		err = index(ctx, s.rdb)
+	}
+	if err != nil {
+		return err
+	}
+	return s.rdb.Set(ctx, migratedEndpointAllV1, "1", 0).Err()
 }
 
 // Ping checks Redis connectivity.

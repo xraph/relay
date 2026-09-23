@@ -15,3 +15,11 @@ func TestReplayConformance(t *testing.T) {
 		return openRedisStore(t, connStr)
 	})
 }
+
+func TestEndpointConformance(t *testing.T) {
+	connStr := startRedis(t)
+	storetest.RunEndpointSuite(t, func(t *testing.T) storetest.EndpointBackend {
+		t.Helper()
+		return openRedisStore(t, connStr)
+	})
+}

@@ -249,7 +249,17 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 
 func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoint.ListOpts) ([]*endpoint.Endpoint, error) {
 	var models []endpointModel
-	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenantID)
+	q := s.sdb.NewSelect(&models)
+	// An empty tenant lists every tenant, the same as ListDLQ. It used to match
+	// the empty string literally, so a caller asking for every endpoint got none.
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	// Honoured on every other backend and silently ignored here, so filtering
+	// to disabled endpoints returned all of them.
+	if opts.Enabled != nil {
+		q = q.Where("enabled = ?", *opts.Enabled)
+	}
 	if opts.Limit > 0 {
 		q = q.Limit(opts.Limit)
 	}

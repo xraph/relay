@@ -80,6 +80,7 @@ func (s *Store) CreateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error
 
 	pipe := s.rdb.Pipeline()
 	pipe.ZAdd(ctx, zEndpointTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe.ZAdd(ctx, zEndpointAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	if m.Enabled {
 		pipe.SAdd(ctx, enabledSetKey(m.TenantID), m.ID)
 	}
@@ -146,6 +147,7 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 
 	pipe := s.rdb.Pipeline()
 	pipe.ZRem(ctx, zEndpointTenant+m.TenantID, m.ID)
+	pipe.ZRem(ctx, zEndpointAll, m.ID)
 	pipe.SRem(ctx, enabledSetKey(m.TenantID), m.ID)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("relay/redis: delete endpoint indexes: %w", err)
@@ -154,7 +156,13 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 }
 
 func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoint.ListOpts) ([]*endpoint.Endpoint, error) {
-	ids, err := s.rdb.ZRange(ctx, zEndpointTenant+tenantID, 0, -1).Result()
+	// An empty tenant lists every tenant, the same as ListDLQ. It used to read
+	// the per-tenant index for the empty string, which is always empty.
+	index := zEndpointTenant + tenantID
+	if tenantID == "" {
+		index = zEndpointAll
+	}
+	ids, err := s.rdb.ZRange(ctx, index, 0, -1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list endpoints: %w", err)
 	}

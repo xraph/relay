@@ -236,7 +236,9 @@ func (s *Store) ListEndpoints(_ context.Context, tenantID string, opts endpoint.
 
 	result := make([]*endpoint.Endpoint, 0, len(s.endpoints))
 	for _, ep := range s.endpoints {
-		if ep.TenantID != tenantID {
+		// An empty tenant lists every tenant, the same as ListDLQ. It used to match
+		// the empty string literally, so a caller asking for every endpoint got none.
+		if tenantID != "" && ep.TenantID != tenantID {
 			continue
 		}
 		if opts.Enabled != nil && ep.Enabled != *opts.Enabled {

@@ -81,7 +81,12 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoint.ListOpts) ([]*endpoint.Endpoint, error) {
 	var models []endpointModel
 
-	filter := bson.M{"tenant_id": tenantID}
+	// An empty tenant lists every tenant, the same as ListDLQ. It used to match
+	// the empty string literally, so a caller asking for every endpoint got none.
+	filter := bson.M{}
+	if tenantID != "" {
+		filter["tenant_id"] = tenantID
+	}
 	if opts.Enabled != nil {
 		filter["enabled"] = *opts.Enabled
 	}

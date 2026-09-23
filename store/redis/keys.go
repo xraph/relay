@@ -20,6 +20,7 @@ const (
 	zEventTypeAll   = "relay:z:evtype:all"
 	zEventTypeGroup = "relay:z:evtype:group:" // + group name
 	zEndpointTenant = "relay:z:ep:tenant:"    // + tenant ID
+	zEndpointAll    = "relay:z:ep:all"        // every endpoint, across tenants
 	zEventAll       = "relay:z:evt:all"
 	zEventTenant    = "relay:z:evt:tenant:" // + tenant ID
 	zDeliveryEP     = "relay:z:del:ep:"     // + endpoint ID
@@ -34,6 +35,12 @@ const (
 const (
 	sEventTypeActive = "relay:s:evtype:active"
 	sEndpointEnabled = "relay:s:ep:tenant:" // + tenantID + ":enabled"
+)
+
+// Markers recording that a one-time data migration has run, so Migrate does
+// not repeat it on every boot.
+const (
+	migratedEndpointAllV1 = "relay:migrated:ep_all:v1"
 )
 
 // entityKey returns the primary key for an entity.

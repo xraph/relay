@@ -284,40 +284,45 @@ func TestListUnsignedIsEmptyWhenEveryEndpointIsSigned(t *testing.T) {
 	}
 }
 
-// Pins a behaviour every backend shares and one caller has wrong.
-//
-// ListEndpoints matches tenant_id literally: postgres and sqlite issue
-// `WHERE tenant_id = ?`, mongo filters on the same field, redis reads a
-// per-tenant sorted set, and memory compares with !=. So an empty tenantID
-// returns only endpoints whose tenant is the empty string, never every
-// tenant. dashboard/data.go's fetchAllEndpoints passes "" with the comment
-// "returns all endpoints across all tenants", which is why the templ
-// dashboard's endpoint count, endpoints page, deliveries page and both
-// widgets render empty.
-//
-// Recorded rather than fixed here: making empty mean "all" is a semantic
-// change to a core method across five backends and belongs in its own
-// change, not in a signing fix.
-func TestListEndpointsTreatsAnEmptyTenantLiterally(t *testing.T) {
+// Pins what an empty tenant means to ListEndpoints: every tenant, the same as
+// ListDLQ. Until this was fixed it matched the empty string literally on all
+// five backends while ListDLQ did the opposite, and dashboard/data.go's
+// fetchAllEndpoints, which passes "" expecting every tenant, got nothing. That
+// emptied the templ overview count, endpoints page, deliveries page and both
+// widgets. This test previously pinned the literal behaviour; it flipped when
+// the behaviour was fixed, which is what a pinning test is for.
+func TestListEndpointsListsEveryTenantForAnEmptyTenant(t *testing.T) {
 	store := memory.New()
 	svc := endpoint.NewService(store, nil)
 
-	if _, err := svc.Create(ctx(), endpoint.Input{
+	a, err := svc.Create(ctx(), endpoint.Input{
 		TenantID:   "t1",
 		URL:        "https://a.example/hook",
 		EventTypes: []string{"*"},
-	}); err != nil {
-		t.Fatalf("create: %v", err)
+	})
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := svc.Create(ctx(), endpoint.Input{
+		TenantID:   "t2",
+		URL:        "https://b.example/hook",
+		EventTypes: []string{"*"},
+	})
+	if err != nil {
+		t.Fatalf("create b: %v", err)
 	}
 
 	got, err := store.ListEndpoints(ctx(), "", endpoint.ListOpts{Limit: 100})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("an empty tenant returned %d endpoints. If this backend now "+
-			"means 'every tenant', the backends disagree and callers cannot "+
-			"tell which they are talking to", len(got))
+	seen := map[string]bool{}
+	for _, ep := range got {
+		seen[ep.ID.String()] = true
+	}
+	if !seen[a.ID.String()] || !seen[b.ID.String()] {
+		t.Fatalf("an empty tenant did not list both tenants' endpoints (t1=%v t2=%v)",
+			seen[a.ID.String()], seen[b.ID.String()])
 	}
 }
 

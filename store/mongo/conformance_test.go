@@ -15,3 +15,11 @@ func TestReplayConformance(t *testing.T) {
 		return openStore(t, uri)
 	})
 }
+
+func TestEndpointConformance(t *testing.T) {
+	uri := startMongo(t)
+	storetest.RunEndpointSuite(t, func(t *testing.T) storetest.EndpointBackend {
+		t.Helper()
+		return openStore(t, uri)
+	})
+}

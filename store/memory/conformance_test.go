@@ -13,3 +13,10 @@ func TestReplayConformance(t *testing.T) {
 		return memory.New()
 	})
 }
+
+func TestEndpointConformance(t *testing.T) {
+	storetest.RunEndpointSuite(t, func(t *testing.T) storetest.EndpointBackend {
+		t.Helper()
+		return memory.New()
+	})
+}

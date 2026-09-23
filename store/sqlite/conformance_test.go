@@ -50,3 +50,10 @@ func TestReplayConformance(t *testing.T) {
 		return openSqliteStore(t)
 	})
 }
+
+func TestEndpointConformance(t *testing.T) {
+	storetest.RunEndpointSuite(t, func(t *testing.T) storetest.EndpointBackend {
+		t.Helper()
+		return openSqliteStore(t)
+	})
+}
