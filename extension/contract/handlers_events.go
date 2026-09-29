@@ -181,9 +181,10 @@ type EventTypeSummary struct {
 // EventTypeDetail adds the schema, the example and the metadata.
 type EventTypeDetail struct {
 	EventTypeSummary
-	Schema   json.RawMessage   `json:"schema,omitempty"`
-	Example  json.RawMessage   `json:"example,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Schema     json.RawMessage   `json:"schema,omitempty"`
+	Example    json.RawMessage   `json:"example,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	ScopeAppID string            `json:"scopeAppId,omitempty"`
 }
 
 // ListEventTypesInput filters the catalog. It is small and unpaged.
@@ -259,7 +260,8 @@ func eventTypesDetailHandler(deps Deps) func(context.Context, GetByNameInput, co
 			return EventTypeDetail{}, mapRelayError(err)
 		}
 		return EventTypeDetail{EventTypeSummary: projectEventType(et),
-			Schema: et.Definition.Schema, Example: et.Definition.Example, Metadata: et.Metadata}, nil
+			Schema: et.Definition.Schema, Example: et.Definition.Example, Metadata: et.Metadata,
+			ScopeAppID: et.ScopeAppID}, nil
 	}
 }
 

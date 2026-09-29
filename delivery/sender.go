@@ -23,6 +23,17 @@ type Sender struct {
 }
 
 // NewSender creates a sender with the given HTTP timeout.
+// The headers a receiver verifies a delivery with. The dashboard's settings
+// page reads them from here, so it cannot describe a header Relay stopped
+// sending.
+const (
+	// HeaderSignature carries "v1=" and the hex HMAC-SHA256 of
+	// "{timestamp}.{body}" under the endpoint's secret.
+	HeaderSignature = "X-Relay-Signature"
+	// HeaderTimestamp carries the unix seconds the signature was made at.
+	HeaderTimestamp = "X-Relay-Timestamp"
+)
+
 func NewSender(timeout time.Duration) *Sender {
 	return &Sender{
 		client: &http.Client{Timeout: timeout},
@@ -58,8 +69,8 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 	if sigErr != nil {
 		return Result{Error: fmt.Sprintf("endpoint has no signing secret: %v", sigErr)}
 	}
-	req.Header.Set("X-Relay-Signature", sig)
-	req.Header.Set("X-Relay-Timestamp", strconv.FormatInt(ts, 10))
+	req.Header.Set(HeaderSignature, sig)
+	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
 
 	// Custom endpoint headers.
 	for k, v := range ep.Headers {

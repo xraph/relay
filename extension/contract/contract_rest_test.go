@@ -2,8 +2,14 @@ package contract_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -12,6 +18,8 @@ import (
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
+	"github.com/xraph/relay/endpoint"
+	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/entity"
 )
@@ -275,5 +283,43 @@ func TestOverviewAndSettings(t *testing.T) {
 	cfg := h.query("settings.config", map[string]any{})
 	if cfg["maxRetries"] == nil || cfg["retryScheduleMs"] == nil {
 		t.Errorf("settings %v", cfg)
+	}
+}
+
+// The settings page tells whoever writes a receiver how to verify a delivery.
+// That text is only worth anything if it is what Relay sends, so this signs a
+// real delivery through the sender and checks every field against it.
+func TestSettingsDescribeTheSignatureRelaySends(t *testing.T) {
+	h := newHarness(t)
+	sig := h.query("settings.config", map[string]any{})["signature"].(map[string]any)
+
+	var got http.Header
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	const secret = "whsec_settings_test"
+	ep := &endpoint.Endpoint{ID: id.NewEndpointID(), URL: srv.URL, Secret: secret, Enabled: true}
+	evt := &event.Event{ID: id.NewEventID(), Type: "invoice.paid", Data: map[string]any{"n": 1}}
+	res := delivery.NewSender(5*time.Second).Send(context.Background(), ep, evt, &delivery.Delivery{ID: id.NewDeliveryID()})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("send: %+v", res)
+	}
+
+	header, tsHeader := sig["header"].(string), sig["timestampHeader"].(string)
+	value, ts := got.Get(header), got.Get(tsHeader)
+	if value == "" || ts == "" {
+		t.Fatalf("delivery carried no %q or %q header: %v", header, tsHeader, got)
+	}
+	if sig["algorithm"] != "HMAC-SHA256" || sig["format"] != "v1=<hex>" || sig["signedContent"] != "{timestamp}.{body}" {
+		t.Fatalf("settings describe %v", sig)
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "." + string(body)))
+	if want := "v1=" + hex.EncodeToString(mac.Sum(nil)); value != want {
+		t.Errorf("%s = %q, but HMAC-SHA256 of {timestamp}.{body} is %q", header, value, want)
 	}
 }

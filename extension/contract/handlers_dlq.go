@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/forge/extensions/dashboard/contract"
 
 	"github.com/xraph/relay/catalog"
+	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/id"
@@ -289,6 +290,18 @@ type SettingsConfig struct {
 	ShutdownTimeoutMs int64   `json:"shutdownTimeoutMs"`
 	CacheTTLMs        int64   `json:"cacheTtlMs"`
 	RetryScheduleMs   []int64 `json:"retryScheduleMs"`
+
+	// Signature is how a receiver checks that a delivery came from Relay.
+	Signature SignatureInfo `json:"signature"`
+}
+
+// SignatureInfo describes delivery signing for whoever writes a receiver.
+type SignatureInfo struct {
+	Algorithm       string `json:"algorithm"`
+	Header          string `json:"header"`
+	TimestampHeader string `json:"timestampHeader"`
+	Format          string `json:"format"`
+	SignedContent   string `json:"signedContent"`
 }
 
 func settingsConfigHandler(deps Deps) func(context.Context, EmptyInput, contract.Principal) (SettingsConfig, error) {
@@ -299,6 +312,15 @@ func settingsConfigHandler(deps Deps) func(context.Context, EmptyInput, contract
 			PollIntervalMs: c.PollInterval.Milliseconds(), MaxPollIntervalMs: c.MaxPollInterval.Milliseconds(),
 			RequestTimeoutMs: c.RequestTimeout.Milliseconds(), ShutdownTimeoutMs: c.ShutdownTimeout.Milliseconds(),
 			CacheTTLMs: c.CacheTTL.Milliseconds(), RetryScheduleMs: make([]int64, 0, len(c.RetrySchedule)),
+			// signature.Sign is the authority for the last three; the
+			// contract test signs a real delivery and checks them against it.
+			Signature: SignatureInfo{
+				Algorithm:       "HMAC-SHA256",
+				Header:          delivery.HeaderSignature,
+				TimestampHeader: delivery.HeaderTimestamp,
+				Format:          "v1=<hex>",
+				SignedContent:   "{timestamp}.{body}",
+			},
 		}
 		for _, d := range c.RetrySchedule {
 			out.RetryScheduleMs = append(out.RetryScheduleMs, d.Milliseconds())
