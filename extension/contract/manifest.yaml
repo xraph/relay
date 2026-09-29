@@ -14,11 +14,43 @@ intents:
   - { name: endpoints.list,         kind: query,   version: 1, capability: read  }
   - { name: endpoints.detail,       kind: query,   version: 1, capability: read  }
   - { name: endpoints.resolve,      kind: query,   version: 1, capability: read  }
-  - { name: endpoints.create,       kind: command, version: 1, capability: write, invalidates: [endpoints.list] }
+  - { name: endpoints.create,       kind: command, version: 1, capability: write, invalidates: [endpoints.list, overview.stats] }
   - { name: endpoints.update,       kind: command, version: 1, capability: write, invalidates: [endpoints.list, endpoints.detail] }
-  - { name: endpoints.delete,       kind: command, version: 1, capability: write, invalidates: [endpoints.list] }
+  - { name: endpoints.delete,       kind: command, version: 1, capability: write, invalidates: [endpoints.list, overview.stats] }
   - { name: endpoints.setEnabled,   kind: command, version: 1, capability: write, invalidates: [endpoints.list, endpoints.detail] }
   - { name: endpoints.rotateSecret, kind: command, version: 1, capability: write, invalidates: [endpoints.list, endpoints.detail] }
+
+  # The delivery log and one delivery with its attempts inline. No commands:
+  # a delivery is not something you edit, and re-sending one is what replay
+  # is for.
+  - { name: deliveries.list,        kind: query,   version: 1, capability: read  }
+  - { name: deliveries.detail,      kind: query,   version: 1, capability: read  }
+
+  - { name: events.list,            kind: query,   version: 1, capability: read  }
+  - { name: events.detail,          kind: query,   version: 1, capability: read  }
+  - { name: events.send,            kind: command, version: 1, capability: write, invalidates: [events.list, deliveries.list, overview.stats] }
+
+  - { name: eventTypes.list,        kind: query,   version: 1, capability: read  }
+  - { name: eventTypes.detail,      kind: query,   version: 1, capability: read  }
+  - { name: eventTypes.match,       kind: query,   version: 1, capability: read  }
+  - { name: eventTypes.register,    kind: command, version: 1, capability: write, invalidates: [eventTypes.list, eventTypes.detail, overview.stats] }
+  - { name: eventTypes.deprecate,   kind: command, version: 1, capability: write, invalidates: [eventTypes.list, eventTypes.detail, overview.stats] }
+
+  # A replay creates a delivery and moves two counters, so every DLQ write
+  # invalidates the delivery log and the overview as well as the DLQ.
+  # bulkPreview is the count a bulk replay would send, shown before you
+  # confirm it.
+  - { name: dlq.list,               kind: query,   version: 1, capability: read  }
+  - { name: dlq.detail,             kind: query,   version: 1, capability: read  }
+  - { name: dlq.bulkPreview,        kind: query,   version: 1, capability: read  }
+  - { name: dlq.replay,             kind: command, version: 1, capability: write, invalidates: [dlq.list, dlq.detail, dlq.bulkPreview, deliveries.list, overview.stats] }
+  - { name: dlq.replayBulk,         kind: command, version: 1, capability: write, invalidates: [dlq.list, dlq.detail, dlq.bulkPreview, deliveries.list, overview.stats] }
+  - { name: dlq.purge,              kind: command, version: 1, capability: write, invalidates: [dlq.list, dlq.detail, dlq.bulkPreview, overview.stats] }
+
+  - { name: overview.stats,         kind: query,   version: 1, capability: read  }
+  # relay.Config is fixed at construction. There is no write intent because
+  # there is nothing it could change.
+  - { name: settings.config,        kind: query,   version: 1, capability: read  }
 
 queries:
   endpointList:
@@ -27,3 +59,17 @@ queries:
   endpointDetail:
     intent: endpoints.detail
     cache: { staleTime: 30s }
+  # A log wants to be close to live; a page someone is watching for a
+  # failure should not show one from half a minute ago.
+  deliveryList:
+    intent: deliveries.list
+    cache: { staleTime: 5s }
+  overviewStats:
+    intent: overview.stats
+    cache: { staleTime: 10s }
+  eventTypeList:
+    intent: eventTypes.list
+    cache: { staleTime: 60s }
+  settingsConfig:
+    intent: settings.config
+    cache: { staleTime: 5m }

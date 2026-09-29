@@ -81,6 +81,39 @@ func Register(
 		func() error {
 			return dispatcher.RegisterCommand(d, c, "endpoints.rotateSecret", 1, endpointsRotateSecretHandler(deps))
 		},
+
+		func() error { return dispatcher.RegisterQuery(d, c, "deliveries.list", 1, deliveriesListHandler(deps)) },
+		func() error {
+			return dispatcher.RegisterQuery(d, c, "deliveries.detail", 1, deliveriesDetailHandler(deps))
+		},
+
+		func() error { return dispatcher.RegisterQuery(d, c, "events.list", 1, eventsListHandler(deps)) },
+		func() error { return dispatcher.RegisterQuery(d, c, "events.detail", 1, eventsDetailHandler(deps)) },
+		func() error { return dispatcher.RegisterCommand(d, c, "events.send", 1, eventsSendHandler(deps)) },
+
+		func() error { return dispatcher.RegisterQuery(d, c, "eventTypes.list", 1, eventTypesListHandler(deps)) },
+		func() error {
+			return dispatcher.RegisterQuery(d, c, "eventTypes.detail", 1, eventTypesDetailHandler(deps))
+		},
+		func() error {
+			return dispatcher.RegisterQuery(d, c, "eventTypes.match", 1, eventTypesMatchHandler(deps))
+		},
+		func() error {
+			return dispatcher.RegisterCommand(d, c, "eventTypes.register", 1, eventTypesRegisterHandler(deps))
+		},
+		func() error {
+			return dispatcher.RegisterCommand(d, c, "eventTypes.deprecate", 1, eventTypesDeprecateHandler(deps))
+		},
+
+		func() error { return dispatcher.RegisterQuery(d, c, "dlq.list", 1, dlqListHandler(deps)) },
+		func() error { return dispatcher.RegisterQuery(d, c, "dlq.detail", 1, dlqDetailHandler(deps)) },
+		func() error { return dispatcher.RegisterQuery(d, c, "dlq.bulkPreview", 1, dlqBulkPreviewHandler(deps)) },
+		func() error { return dispatcher.RegisterCommand(d, c, "dlq.replay", 1, dlqReplayHandler(deps)) },
+		func() error { return dispatcher.RegisterCommand(d, c, "dlq.replayBulk", 1, dlqReplayBulkHandler(deps)) },
+		func() error { return dispatcher.RegisterCommand(d, c, "dlq.purge", 1, dlqPurgeHandler(deps)) },
+
+		func() error { return dispatcher.RegisterQuery(d, c, "overview.stats", 1, overviewStatsHandler(deps)) },
+		func() error { return dispatcher.RegisterQuery(d, c, "settings.config", 1, settingsConfigHandler(deps)) },
 	} {
 		if err := bind(); err != nil {
 			return fmt.Errorf("relay/contract: register intent: %w", err)

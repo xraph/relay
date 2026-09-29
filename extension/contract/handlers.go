@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/relay"
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/id"
+	redisstore "github.com/xraph/relay/store/redis"
 )
 
 // AckResponse is what a command that has nothing else to say returns. ID names
@@ -52,6 +53,27 @@ func mapRelayError(err error) error {
 	}
 	if errors.Is(err, relay.ErrEndpointNotFound) {
 		return &contract.Error{Code: contract.CodeNotFound, Message: "endpoint not found"}
+	}
+	switch {
+	case errors.Is(err, relay.ErrDeliveryNotFound):
+		return &contract.Error{Code: contract.CodeNotFound, Message: "delivery not found"}
+	case errors.Is(err, relay.ErrEventNotFound):
+		return &contract.Error{Code: contract.CodeNotFound, Message: "event not found"}
+	case errors.Is(err, relay.ErrEventTypeNotFound):
+		return &contract.Error{Code: contract.CodeNotFound, Message: "event type not found"}
+	case errors.Is(err, relay.ErrDLQNotFound):
+		return &contract.Error{Code: contract.CodeNotFound, Message: "dead letter entry not found"}
+	case errors.Is(err, relay.ErrAlreadyReplayed):
+		// The row is kept and marked, so a second replay is refused rather
+		// than sent twice. The page reads this code, not the message.
+		return &contract.Error{Code: contract.CodeConflict, Message: "this entry has already been replayed"}
+	case errors.Is(err, relay.ErrInvalidCursor):
+		return &contract.Error{Code: contract.CodeBadRequest, Message: "invalid cursor"}
+	case errors.Is(err, relay.ErrInvalidFilter), errors.Is(err, relay.ErrPayloadValidationFailed),
+		errors.Is(err, relay.ErrEventTypeDeprecated):
+		return &contract.Error{Code: contract.CodeBadRequest, Message: err.Error()}
+	case errors.Is(err, redisstore.ErrDeliveryIndexNotBuilt):
+		return &contract.Error{Code: contract.CodeUnavailable, Message: err.Error()}
 	}
 	return &contract.Error{Code: contract.CodeInternal, Message: err.Error()}
 }

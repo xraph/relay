@@ -195,3 +195,9 @@ func (r *Relay) Store() store.Store {
 func (r *Relay) DLQ() *dlq.Service {
 	return r.dlqSvc
 }
+
+// Config returns the configuration Relay was built with. It is fixed at
+// construction; there is no setter.
+func (r *Relay) Config() Config {
+	return r.config
+}
