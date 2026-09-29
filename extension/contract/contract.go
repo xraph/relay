@@ -2,9 +2,8 @@
 // registers the `relay` contributor with the dashboard's contract registry and
 // answers its intents from the live Relay instance.
 //
-// Relay's templ dashboard still renders server-side for now. This package is
-// the parallel surface the React shell reads, and it will outlive the templ
-// one.
+// It is the only dashboard surface Relay has. The templ dashboard it replaced
+// is gone; MIGRATION.md records where each of its pages went.
 package contract
 
 import (

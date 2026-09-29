@@ -10,7 +10,6 @@ import (
 	dashboard "github.com/xraph/forge/extensions/dashboard"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/kv"
 	"github.com/xraph/vessel"
@@ -18,7 +17,6 @@ import (
 	"github.com/xraph/relay"
 	"github.com/xraph/relay/api"
 	"github.com/xraph/relay/catalog"
-	relaydash "github.com/xraph/relay/dashboard"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/endpoint"
 	relaycontract "github.com/xraph/relay/extension/contract"
@@ -39,10 +37,10 @@ const ExtensionDescription = "Composable webhook delivery engine with guaranteed
 // ExtensionVersion is the semantic version.
 const ExtensionVersion = "0.1.0"
 
-// Ensure Extension implements forge.Extension and dashboard.DashboardAware at compile time.
+// Ensure Extension implements forge.Extension and the dashboard's contract
+// interface at compile time.
 var (
-	_ forge.Extension          = (*Extension)(nil)
-	_ dashboard.DashboardAware = (*Extension)(nil)
+	_ forge.Extension = (*Extension)(nil)
 	// The dashboard finds the contract contributor by this interface. A
 	// signature that drifted from it would make the dashboard skip relay in
 	// silence, so it is asserted here rather than discovered in a browser.
@@ -231,9 +229,8 @@ func (e *Extension) Prefix() string {
 }
 
 // RegisterContractContributor implements dashboard.ContractContributorAware. It
-// registers the relay contract contributor, which is what the React shell
-// reads. The templ LocalContributor above is unaffected, and both run side by
-// side until the templ dashboard is retired.
+// registers the relay contract contributor, which the React shell's relay
+// plugin reads. See MIGRATION.md for what moved from the templ dashboard.
 func (e *Extension) RegisterContractContributor(
 	disp *dispatcher.Dispatcher,
 	reg dashcontract.Registry,
@@ -252,17 +249,6 @@ func (e *Extension) RegisterContractContributor(
 		return fmt.Errorf("relay: register contract contributor: %w", err)
 	}
 	return nil
-}
-
-// DashboardContributor implements dashboard.DashboardAware. It returns a
-// LocalContributor that renders relay pages, widgets, and settings in the
-// Forge dashboard using templ + ForgeUI.
-func (e *Extension) DashboardContributor() contributor.LocalContributor {
-	return relaydash.New(
-		relaydash.NewManifest(),
-		e.r,
-		e.config.Config,
-	)
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---
