@@ -84,7 +84,7 @@ func (svc *Service) PushFailed(ctx context.Context, d *delivery.Delivery, ep *en
 		EventType:      evt.Type,
 		TenantID:       ep.TenantID,
 		URL:            ep.URL,
-		Payload:        payload,
+		Payload:        json.RawMessage(payload),
 		Error:          lastError,
 		AttemptCount:   d.AttemptCount,
 		LastStatusCode: lastStatusCode,

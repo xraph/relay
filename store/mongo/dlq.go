@@ -14,9 +14,12 @@ import (
 
 // Push moves a permanently failed delivery into the DLQ.
 func (s *Store) Push(ctx context.Context, entry *dlq.Entry) error {
-	m := toDLQEntryModel(entry)
+	m, err := toDLQEntryModel(entry)
+	if err != nil {
+		return fmt.Errorf("relay/mongo: push dlq: %w", err)
+	}
 
-	_, err := s.mdb.NewInsert(m).Exec(ctx)
+	_, err = s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("relay/mongo: push dlq: %w", err)
 	}

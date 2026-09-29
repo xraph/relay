@@ -8,7 +8,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -401,6 +403,33 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 		}
 	})
 
+	// PushFailed hands the store the event's data as JSON bytes. Postgres,
+	// sqlite and redis marshalled those bytes again and kept a base64 string,
+	// and mongo kept a binary, so only the memory store gave the JSON back.
+	t.Run("a payload reads back as the JSON that was pushed", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		const want = `{"id":"inv_1","lines":[{"sku":"A-1","qty":2}]}`
+		for _, payload := range []any{json.RawMessage(want), []byte(want)} {
+			e := NewEntry()
+			e.Payload = payload
+			if err := s.Push(ctx, e); err != nil {
+				t.Fatalf("push %T: %v", payload, err)
+			}
+			got, err := s.GetDLQ(ctx, e.ID)
+			if err != nil {
+				t.Fatalf("get %T: %v", payload, err)
+			}
+			b, err := json.Marshal(got.Payload)
+			if err != nil {
+				t.Fatalf("marshal read-back payload: %v", err)
+			}
+			if !jsonEqual(t, b, []byte(want)) {
+				t.Fatalf("pushed %T %s, read back %s", payload, want, b)
+			}
+		}
+	})
+
 	t.Run("an enqueued delivery round-trips its retry budget", func(t *testing.T) {
 		ctx := context.Background()
 		s := newStore(t)
@@ -427,4 +456,18 @@ func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 				"reintroduces the 1 < 0 bug", got.MaxAttempts)
 		}
 	})
+}
+
+// jsonEqual reports whether a and b hold the same JSON value, ignoring key
+// order and spacing, which jsonb does not keep.
+func jsonEqual(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		t.Fatalf("want is not JSON: %v", err)
+	}
+	return reflect.DeepEqual(x, y)
 }

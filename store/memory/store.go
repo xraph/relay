@@ -529,10 +529,20 @@ func (s *Store) CountPending(_ context.Context) (int64, error) {
 
 // Push moves a permanently failed delivery into the DLQ.
 func (s *Store) Push(_ context.Context, entry *dlq.Entry) error {
+	payload, err := dlq.EncodePayload(entry.Payload)
+	if err != nil {
+		return err
+	}
+	// A copy holding the encoded payload, so this store hands back the same
+	// json.RawMessage every persistent backend does, and the caller's entry
+	// is left as it was.
+	cp := *entry
+	cp.Payload = payload
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.dlqEntries[entry.ID.String()] = entry
+	s.dlqEntries[entry.ID.String()] = &cp
 	return nil
 }
 

@@ -339,8 +339,11 @@ type dlqEntryModel struct {
 	UpdatedAt      time.Time  `grove:"updated_at"`
 }
 
-func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
-	payload, _ := json.Marshal(e.Payload) //nolint:errcheck // best-effort serialization
+func toDLQEntryModel(e *dlq.Entry) (*dlqEntryModel, error) {
+	payload, err := dlq.EncodePayload(e.Payload)
+	if err != nil {
+		return nil, err
+	}
 	return &dlqEntryModel{
 		ID:             e.ID.String(),
 		DeliveryID:     e.DeliveryID.String(),
@@ -357,7 +360,7 @@ func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
 		FailedAt:       e.FailedAt,
 		CreatedAt:      e.CreatedAt,
 		UpdatedAt:      e.UpdatedAt,
-	}
+	}, nil
 }
 
 func fromDLQEntryModel(m *dlqEntryModel) (*dlq.Entry, error) {

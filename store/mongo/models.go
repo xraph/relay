@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/grove"
+	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
@@ -299,7 +300,14 @@ type dlqEntryModel struct {
 	UpdatedAt      time.Time  `grove:"updated_at"       bson:"updated_at"`
 }
 
-func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
+func toDLQEntryModel(e *dlq.Entry) (*dlqEntryModel, error) {
+	// The payload is kept as JSON text in a string. Decoding a BSON document
+	// back into `any` yields bson.D, which does not marshal as the JSON it
+	// came from.
+	payload, err := dlq.EncodePayload(e.Payload)
+	if err != nil {
+		return nil, err
+	}
 	return &dlqEntryModel{
 		ID:             e.ID.String(),
 		DeliveryID:     e.DeliveryID.String(),
@@ -308,7 +316,7 @@ func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
 		TenantID:       e.TenantID,
 		EventType:      e.EventType,
 		URL:            e.URL,
-		Payload:        e.Payload,
+		Payload:        string(payload),
 		Error:          e.Error,
 		AttemptCount:   e.AttemptCount,
 		LastStatusCode: e.LastStatusCode,
@@ -316,7 +324,7 @@ func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
 		FailedAt:       e.FailedAt,
 		CreatedAt:      e.CreatedAt,
 		UpdatedAt:      e.UpdatedAt,
-	}
+	}, nil
 }
 
 func fromDLQEntryModel(m *dlqEntryModel) (*dlq.Entry, error) {
@@ -352,11 +360,28 @@ func fromDLQEntryModel(m *dlqEntryModel) (*dlq.Entry, error) {
 		TenantID:       m.TenantID,
 		EventType:      m.EventType,
 		URL:            m.URL,
-		Payload:        m.Payload,
+		Payload:        dlqPayload(m.Payload),
 		Error:          m.Error,
 		AttemptCount:   m.AttemptCount,
 		LastStatusCode: m.LastStatusCode,
 		ReplayedAt:     m.ReplayedAt,
 		FailedAt:       m.FailedAt,
 	}, nil
+}
+
+// dlqPayload reads back what toDLQEntryModel stored. Entries written before
+// it stored a string hold the JSON bytes as a BSON binary, which are the right
+// bytes in the wrong wrapper.
+func dlqPayload(p any) any {
+	switch v := p.(type) {
+	case string:
+		if json.Valid([]byte(v)) {
+			return json.RawMessage(v)
+		}
+	case bson.Binary:
+		if json.Valid(v.Data) {
+			return json.RawMessage(v.Data)
+		}
+	}
+	return p
 }

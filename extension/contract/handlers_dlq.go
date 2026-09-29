@@ -102,32 +102,6 @@ func projectDLQ(e *dlq.Entry) DLQEntrySummary {
 	}
 }
 
-// payloadJSON returns the entry's payload as JSON. Backends hand it back as
-// raw bytes of JSON or as a decoded value, depending on how they store it.
-func payloadJSON(p any) json.RawMessage {
-	switch v := p.(type) {
-	case nil:
-		return json.RawMessage("null")
-	case []byte:
-		if json.Valid(v) {
-			return v
-		}
-	case json.RawMessage:
-		if json.Valid(v) {
-			return v
-		}
-	case string:
-		if json.Valid([]byte(v)) {
-			return json.RawMessage(v)
-		}
-	}
-	b, err := json.Marshal(p)
-	if err != nil {
-		return json.RawMessage("null")
-	}
-	return b
-}
-
 func dlqListHandler(deps Deps) func(context.Context, ListDLQInput, contract.Principal) (ListDLQResponse, error) {
 	return func(ctx context.Context, in ListDLQInput, _ contract.Principal) (ListDLQResponse, error) {
 		epID, err := optionalID(in.EndpointID, id.ParseEndpointID, "endpoint")
@@ -160,7 +134,7 @@ func dlqDetailHandler(deps Deps) func(context.Context, GetByIDInput, contract.Pr
 		if err != nil {
 			return DLQEntryDetail{}, mapRelayError(err)
 		}
-		return DLQEntryDetail{DLQEntrySummary: projectDLQ(e), Payload: payloadJSON(e.Payload)}, nil
+		return DLQEntryDetail{DLQEntrySummary: projectDLQ(e), Payload: dlq.PayloadJSON(e.Payload)}, nil
 	}
 }
 

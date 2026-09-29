@@ -18,24 +18,28 @@ import (
 
 // dlqEntryModel is the JSON representation stored in Redis.
 type dlqEntryModel struct {
-	ID             string     `json:"id"`
-	DeliveryID     string     `json:"delivery_id"`
-	EventID        string     `json:"event_id"`
-	EndpointID     string     `json:"endpoint_id"`
-	TenantID       string     `json:"tenant_id"`
-	EventType      string     `json:"event_type"`
-	URL            string     `json:"url"`
-	Payload        any        `json:"payload,omitempty"`
-	Error          string     `json:"error"`
-	AttemptCount   int        `json:"attempt_count"`
-	LastStatusCode int        `json:"last_status_code"`
-	ReplayedAt     *time.Time `json:"replayed_at,omitempty"`
-	FailedAt       time.Time  `json:"failed_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID             string          `json:"id"`
+	DeliveryID     string          `json:"delivery_id"`
+	EventID        string          `json:"event_id"`
+	EndpointID     string          `json:"endpoint_id"`
+	TenantID       string          `json:"tenant_id"`
+	EventType      string          `json:"event_type"`
+	URL            string          `json:"url"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Error          string          `json:"error"`
+	AttemptCount   int             `json:"attempt_count"`
+	LastStatusCode int             `json:"last_status_code"`
+	ReplayedAt     *time.Time      `json:"replayed_at,omitempty"`
+	FailedAt       time.Time       `json:"failed_at"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
-func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
+func toDLQEntryModel(e *dlq.Entry) (*dlqEntryModel, error) {
+	payload, err := dlq.EncodePayload(e.Payload)
+	if err != nil {
+		return nil, err
+	}
 	return &dlqEntryModel{
 		ID:             e.ID.String(),
 		DeliveryID:     e.DeliveryID.String(),
@@ -44,7 +48,7 @@ func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
 		TenantID:       e.TenantID,
 		EventType:      e.EventType,
 		URL:            e.URL,
-		Payload:        e.Payload,
+		Payload:        payload,
 		Error:          e.Error,
 		AttemptCount:   e.AttemptCount,
 		LastStatusCode: e.LastStatusCode,
@@ -52,7 +56,7 @@ func toDLQEntryModel(e *dlq.Entry) *dlqEntryModel {
 		FailedAt:       e.FailedAt,
 		CreatedAt:      e.CreatedAt,
 		UpdatedAt:      e.UpdatedAt,
-	}
+	}, nil
 }
 
 func fromDLQEntryModel(m *dlqEntryModel) (*dlq.Entry, error) {
@@ -94,10 +98,13 @@ func fromDLQEntryModel(m *dlqEntryModel) (*dlq.Entry, error) {
 }
 
 func (s *Store) Push(ctx context.Context, entry *dlq.Entry) error {
-	m := toDLQEntryModel(entry)
+	m, err := toDLQEntryModel(entry)
+	if err != nil {
+		return fmt.Errorf("relay/redis: push dlq: %w", err)
+	}
 	key := entityKey(prefixDLQ, m.ID)
 
-	if err := s.setEntity(ctx, key, m); err != nil {
+	if err = s.setEntity(ctx, key, m); err != nil {
 		return fmt.Errorf("relay/redis: push dlq: %w", err)
 	}
 
@@ -109,7 +116,7 @@ func (s *Store) Push(ctx context.Context, entry *dlq.Entry) error {
 	if m.EndpointID != "" {
 		pipe.ZAdd(ctx, zDLQEndpoint+m.EndpointID, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
 	}
-	_, err := pipe.Exec(ctx)
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("relay/redis: push dlq indexes: %w", err)
 	}

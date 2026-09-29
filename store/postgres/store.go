@@ -593,8 +593,11 @@ func (s *Store) CountPending(ctx context.Context) (int64, error) {
 // ==================== DLQ Store ====================
 
 func (s *Store) Push(ctx context.Context, entry *dlq.Entry) error {
-	m := toDLQEntryModel(entry)
-	_, err := s.pg.NewInsert(m).Exec(ctx)
+	m, err := toDLQEntryModel(entry)
+	if err != nil {
+		return err
+	}
+	_, err = s.pg.NewInsert(m).Exec(ctx)
 	return err
 }
 

@@ -60,6 +60,11 @@ templ pages had been hiding. All of them are fixed.
 - Redis marked a claimed delivery `delivered` before its attempt had been made.
 - The memory store purged dead letters by `created_at` where every other
   backend used `failed_at`.
+- A dead letter's payload came back as a base64 string on postgres, sqlite
+  and redis, because each store marshalled the JSON bytes it was handed a
+  second time. Mongo kept them as a BSON binary. Only the in-memory store
+  showed the event's data. Entries written before the fix still read
+  correctly: the DLQ page decodes the old form.
 
 ## Page by page
 
