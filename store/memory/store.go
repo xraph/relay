@@ -641,7 +641,8 @@ func (s *Store) Purge(_ context.Context, before time.Time) (int64, error) {
 
 	var count int64
 	for k, e := range s.dlqEntries {
-		if e.CreatedAt.Before(before) {
+		// By when it failed, as every other backend does.
+		if e.FailedAt.Before(before) {
 			delete(s.dlqEntries, k)
 			count++
 		}

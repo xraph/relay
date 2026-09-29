@@ -24,6 +24,7 @@ import (
 // ReplayBackend is the slice of a store the replay suite exercises.
 type ReplayBackend interface {
 	Push(ctx context.Context, entry *dlq.Entry) error
+	Purge(ctx context.Context, before time.Time) (int64, error)
 	GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error)
 	ListDLQ(ctx context.Context, opts dlq.ListOpts) ([]*dlq.Entry, error)
 	MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error
@@ -68,6 +69,33 @@ func NewEntry() *dlq.Entry {
 // RunReplaySuite asserts the replay semantics every backend must share.
 func RunReplaySuite(t *testing.T, newStore func(t *testing.T) ReplayBackend) {
 	t.Helper()
+
+	// Purge is "entries that failed before the cutoff". The memory store
+	// compared created_at instead, which agrees only when the two are equal.
+	t.Run("Purge removes entries by when they failed", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		cutoff := time.Date(2001, 6, 1, 0, 0, 0, 0, time.UTC)
+		failedLongAgo := NewEntry()
+		failedLongAgo.FailedAt = cutoff.Add(-time.Hour) // created now, failed long ago
+		recent := NewEntry()
+		recent.FailedAt = cutoff.Add(time.Hour)
+		recent.CreatedAt = cutoff.Add(-24 * time.Hour) // created long ago, failed later
+		for _, e := range []*dlq.Entry{failedLongAgo, recent} {
+			if err := s.Push(ctx, e); err != nil {
+				t.Fatalf("push: %v", err)
+			}
+		}
+		if _, err := s.Purge(ctx, cutoff); err != nil {
+			t.Fatalf("purge: %v", err)
+		}
+		if _, err := s.GetDLQ(ctx, failedLongAgo.ID); err == nil {
+			t.Error("an entry that failed before the cutoff survived the purge")
+		}
+		if _, err := s.GetDLQ(ctx, recent.ID); err != nil {
+			t.Errorf("an entry that failed after the cutoff was purged: %v", err)
+		}
+	})
 
 	t.Run("MarkReplayed keeps the row and sets the timestamp", func(t *testing.T) {
 		ctx := context.Background()
