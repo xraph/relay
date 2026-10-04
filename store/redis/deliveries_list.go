@@ -48,11 +48,11 @@ func (s *Store) ListDeliveries(ctx context.Context, q delivery.Query) (*delivery
 	case q.EventID != nil:
 		index = zDeliveryEvt + q.EventID.String()
 	default:
-		built, existsErr := s.rdb.Exists(ctx, deliveryIndexBuilt).Result()
+		built, existsErr := s.exists(ctx, deliveryIndexBuilt)
 		if existsErr != nil {
 			return nil, fmt.Errorf("relay/redis: check delivery index: %w", existsErr)
 		}
-		if built == 0 {
+		if !built {
 			return nil, ErrDeliveryIndexNotBuilt
 		}
 	}
@@ -94,12 +94,12 @@ func walk[T any](
 	examined := 0
 
 	for offset := int64(0); ; offset += scanBatch {
-		entries, rangeErr := s.rdb.ZRevRangeByScoreWithScores(ctx, index, &goredis.ZRangeBy{
+		entries, rangeErr := s.zRevRangeByScoreWithScores(ctx, index, &goredis.ZRangeBy{
 			Max:    scoreString(upper),
 			Min:    scoreString(lower),
 			Offset: offset,
 			Count:  scanBatch,
-		}).Result()
+		})
 		if rangeErr != nil {
 			return nil, "", false, rangeErr
 		}
@@ -165,11 +165,11 @@ func scoreString(f float64) string {
 // markers as backfillEndpointAll: re-run now and then to repair the index
 // after a rollback to a version that did not maintain it.
 func (s *Store) backfillDeliveryAll(ctx context.Context) error {
-	recent, err := s.rdb.Exists(ctx, migratedDeliveryAllV1).Result()
+	recent, err := s.exists(ctx, migratedDeliveryAllV1)
 	if err != nil {
 		return fmt.Errorf("relay/redis: check delivery backfill marker: %w", err)
 	}
-	if recent == 1 {
+	if recent {
 		return nil
 	}
 	keys, err := s.keysMatching(ctx, zDeliveryEP+"*")
@@ -177,7 +177,7 @@ func (s *Store) backfillDeliveryAll(ctx context.Context) error {
 		return fmt.Errorf("relay/redis: scan delivery indexes: %w", err)
 	}
 	for _, key := range keys {
-		members, err := s.rdb.ZRangeWithScores(ctx, key, 0, -1).Result()
+		members, err := s.zRangeAllWithScores(ctx, key)
 		if err != nil {
 			if isWrongType(err) {
 				continue
@@ -187,14 +187,14 @@ func (s *Store) backfillDeliveryAll(ctx context.Context) error {
 		if len(members) == 0 {
 			continue
 		}
-		if err := s.rdb.ZAdd(ctx, zDeliveryAll, members...).Err(); err != nil {
+		if err := s.zAdd(ctx, zDeliveryAll, members...); err != nil {
 			return fmt.Errorf("relay/redis: backfill delivery index: %w", err)
 		}
 	}
-	pipe := s.rdb.Pipeline()
-	pipe.Set(ctx, deliveryIndexBuilt, "1", 0)
-	pipe.Set(ctx, migratedDeliveryAllV1, "1", endpointBackfillTTL)
-	if _, err := pipe.Exec(ctx); err != nil {
+	pipe := s.pipeline(ctx)
+	pipe.set(deliveryIndexBuilt, "1", 0)
+	pipe.set(migratedDeliveryAllV1, "1", endpointBackfillTTL)
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: record delivery backfill: %w", err)
 	}
 	return nil
@@ -205,11 +205,11 @@ func (s *Store) backfillDeliveryAll(ctx context.Context) error {
 // filters on both in Go, so an old row missing them would never match a
 // tenant or type filter.
 func (s *Store) backfillDeliveryFields(ctx context.Context) error {
-	done, err := s.rdb.Exists(ctx, deliveryFieldsBackfilled).Result()
+	done, err := s.exists(ctx, deliveryFieldsBackfilled)
 	if err != nil {
 		return fmt.Errorf("relay/redis: check delivery fields marker: %w", err)
 	}
-	if done == 1 {
+	if done {
 		return nil
 	}
 	keys, err := s.keysMatching(ctx, prefixDelivery+"*")
@@ -234,7 +234,7 @@ func (s *Store) backfillDeliveryFields(ctx context.Context) error {
 			return fmt.Errorf("relay/redis: backfill delivery %s: %w", m.ID, err)
 		}
 	}
-	if err := s.rdb.Set(ctx, deliveryFieldsBackfilled, "1", 0).Err(); err != nil {
+	if err := s.setString(ctx, deliveryFieldsBackfilled, "1", 0); err != nil {
 		return fmt.Errorf("relay/redis: record delivery fields backfill: %w", err)
 	}
 	return nil

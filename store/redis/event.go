@@ -67,7 +67,7 @@ func (s *Store) CreateEvent(ctx context.Context, evt *event.Event) error {
 
 	// Idempotency check via SET NX.
 	if m.IdempotencyKey != "" {
-		ok, err := s.rdb.SetNX(ctx, uniqueEventIdem+m.IdempotencyKey, m.ID, 0).Result()
+		ok, err := s.setNX(ctx, uniqueEventIdem+m.IdempotencyKey, m.ID)
 		if err != nil {
 			return fmt.Errorf("relay/redis: create event idem check: %w", err)
 		}
@@ -80,13 +80,12 @@ func (s *Store) CreateEvent(ctx context.Context, evt *event.Event) error {
 		return fmt.Errorf("relay/redis: create event: %w", err)
 	}
 
-	pipe := s.rdb.Pipeline()
-	pipe.ZAdd(ctx, zEventAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe := s.pipeline(ctx)
+	pipe.zAdd(zEventAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	if m.TenantID != "" {
-		pipe.ZAdd(ctx, zEventTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+		pipe.zAdd(zEventTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	}
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: create event indexes: %w", err)
 	}
 	return nil
@@ -141,7 +140,7 @@ func (s *Store) ListEvents(ctx context.Context, opts event.ListOpts) ([]*event.E
 }
 
 func (s *Store) ListEventsByTenant(ctx context.Context, tenantID string, opts event.ListOpts) ([]*event.Event, error) {
-	ids, err := s.rdb.ZRange(ctx, zEventTenant+tenantID, 0, -1).Result()
+	ids, err := s.zRangeAll(ctx, zEventTenant+tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list events by tenant: %w", err)
 	}

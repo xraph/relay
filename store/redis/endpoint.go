@@ -79,14 +79,13 @@ func (s *Store) CreateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error
 		return fmt.Errorf("relay/redis: create endpoint: %w", err)
 	}
 
-	pipe := s.rdb.Pipeline()
-	pipe.ZAdd(ctx, zEndpointTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-	pipe.ZAdd(ctx, zEndpointAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe := s.pipeline(ctx)
+	pipe.zAdd(zEndpointTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe.zAdd(zEndpointAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	if m.Enabled {
-		pipe.SAdd(ctx, enabledSetKey(m.TenantID), m.ID)
+		pipe.sAdd(enabledSetKey(m.TenantID), m.ID)
 	}
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: create endpoint indexes: %w", err)
 	}
 	return nil
@@ -123,12 +122,18 @@ func (s *Store) UpdateEndpoint(ctx context.Context, ep *endpoint.Endpoint) error
 	}
 
 	// Update enabled set.
-	if m.Enabled {
-		s.rdb.SAdd(ctx, enabledSetKey(m.TenantID), m.ID)
-	} else {
-		s.rdb.SRem(ctx, enabledSetKey(m.TenantID), m.ID)
+	if err := s.setEnabledMember(ctx, m.TenantID, m.ID, m.Enabled); err != nil {
+		return fmt.Errorf("relay/redis: update endpoint enabled set: %w", err)
 	}
 	return nil
+}
+
+// setEnabledMember adds an endpoint to its tenant's enabled set, or takes it out.
+func (s *Store) setEnabledMember(ctx context.Context, tenantID, epID string, enabled bool) error {
+	if enabled {
+		return s.sAdd(ctx, enabledSetKey(tenantID), epID)
+	}
+	return s.sRem(ctx, enabledSetKey(tenantID), epID)
 }
 
 func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
@@ -146,11 +151,11 @@ func (s *Store) DeleteEndpoint(ctx context.Context, epID id.ID) error {
 		return fmt.Errorf("relay/redis: delete endpoint: %w", err)
 	}
 
-	pipe := s.rdb.Pipeline()
-	pipe.ZRem(ctx, zEndpointTenant+m.TenantID, m.ID)
-	pipe.ZRem(ctx, zEndpointAll, m.ID)
-	pipe.SRem(ctx, enabledSetKey(m.TenantID), m.ID)
-	if _, err := pipe.Exec(ctx); err != nil {
+	pipe := s.pipeline(ctx)
+	pipe.zRem(zEndpointTenant+m.TenantID, m.ID)
+	pipe.zRem(zEndpointAll, m.ID)
+	pipe.sRem(enabledSetKey(m.TenantID), m.ID)
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: delete endpoint indexes: %w", err)
 	}
 	return nil
@@ -168,16 +173,16 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 	// global index. That index is only trustworthy once Migrate has built it.
 	index := zEndpointTenant + tenantID
 	if tenantID == "" {
-		built, err := s.rdb.Exists(ctx, endpointIndexBuilt).Result()
+		built, err := s.exists(ctx, endpointIndexBuilt)
 		if err != nil {
 			return nil, fmt.Errorf("relay/redis: check endpoint index: %w", err)
 		}
-		if built == 0 {
+		if !built {
 			return nil, ErrEndpointIndexNotBuilt
 		}
 		index = zEndpointAll
 	}
-	ids, err := s.rdb.ZRange(ctx, index, 0, -1).Result()
+	ids, err := s.zRangeAll(ctx, index)
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list endpoints: %w", err)
 	}
@@ -209,7 +214,7 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 	if len(stale) > 0 {
 		// Best-effort tidy-up. A failure here costs speed, not correctness:
 		// the ids are skipped either way.
-		_ = s.rdb.ZRem(ctx, index, stale...).Err() //nolint:errcheck // best-effort: the stale ids are skipped whether or not this succeeds
+		_ = s.zRem(ctx, index, stale...) //nolint:errcheck // best-effort: the stale ids are skipped whether or not this succeeds
 	}
 
 	// Paging happens after filtering, never inside ZRANGE. Skipped and
@@ -219,7 +224,7 @@ func (s *Store) ListEndpoints(ctx context.Context, tenantID string, opts endpoin
 }
 
 func (s *Store) Resolve(ctx context.Context, tenantID, eventType string) ([]*endpoint.Endpoint, error) {
-	ids, err := s.rdb.SMembers(ctx, enabledSetKey(tenantID)).Result()
+	ids, err := s.sMembers(ctx, enabledSetKey(tenantID))
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: resolve: %w", err)
 	}
@@ -265,10 +270,8 @@ func (s *Store) SetEnabled(ctx context.Context, epID id.ID, enabled bool) error 
 		return fmt.Errorf("relay/redis: set enabled: %w", err)
 	}
 
-	if enabled {
-		s.rdb.SAdd(ctx, enabledSetKey(m.TenantID), m.ID)
-	} else {
-		s.rdb.SRem(ctx, enabledSetKey(m.TenantID), m.ID)
+	if err := s.setEnabledMember(ctx, m.TenantID, m.ID, enabled); err != nil {
+		return fmt.Errorf("relay/redis: set enabled index: %w", err)
 	}
 	return nil
 }

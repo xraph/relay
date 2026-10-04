@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/xraph/grove/hook"
 	"github.com/xraph/grove/kv"
 	"github.com/xraph/grove/kv/drivers/redisdriver"
 	"github.com/xraph/grove/kv/middleware"
@@ -284,65 +283,7 @@ func openHookedRedisStore(t *testing.T, connStr string, h any) *redisstore.Store
 	return redisstore.New(kvs)
 }
 
-// Relay's redis store reads and writes some keys through the raw client and
-// the rest through kv, and relies on both meaning the same key. A kv hook that
-// rewrites keys breaks that silently: under a namespace, deletes became no-ops
-// (a "deleted" endpoint kept its record and secret), a replayed DLQ record was
-// never removed so a second replay double-sent, and the replay claim could not
-// find any record at all. So Migrate refuses such a store, once, at startup.
-func TestMigrateRefusesAStoreThatRewritesKeys(t *testing.T) {
-	connStr := startRedis(t)
-	s := openHookedRedisStore(t, connStr, middleware.NewNamespace("app1"))
-	if err := s.Migrate(context.Background()); !errors.Is(err, redisstore.ErrKVRewritesKeys) {
-		t.Fatalf("Migrate on a namespaced store: err = %v, want ErrKVRewritesKeys", err)
-	}
-}
-
-// A namespace scoped to reads leaves writes where relay's raw client expects
-// them, so a check that only probes writes passes it, and then every read of a
-// record looks in the wrong place: GetEndpoint answers "not found" straight
-// after a create. The check probes the read path too.
-func TestMigrateRefusesAStoreThatRewritesKeysOnReadsOnly(t *testing.T) {
-	connStr := startRedis(t)
-	drv := redisdriver.New()
-	if err := drv.Open(context.Background(), connStr); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	kvs, err := kv.Open(drv, kv.WithHook(middleware.NewNamespace("app1"),
-		hook.Scope{Operations: []hook.Operation{kv.OpGet}}))
-	if err != nil {
-		t.Fatalf("kv open: %v", err)
-	}
-	t.Cleanup(func() { _ = kvs.Close() })
-	s := redisstore.New(kvs)
-	if err := s.Migrate(context.Background()); !errors.Is(err, redisstore.ErrKVRewritesKeys) {
-		t.Fatalf("Migrate on a read-scoped namespace: err = %v, want ErrKVRewritesKeys", err)
-	}
-}
-
-// The case that matters most to relay, whose raw client reads records kv wrote:
-// a hook that rewrites keys on writes only. kv writes the record somewhere the
-// raw client never looks, and reads through kv do not show it either, so it is
-// invisible unless the check goes looking for where the write went.
-func TestMigrateRefusesAStoreThatRewritesKeysOnWritesOnly(t *testing.T) {
-	connStr := startRedis(t)
-	drv := redisdriver.New()
-	if err := drv.Open(context.Background(), connStr); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	kvs, err := kv.Open(drv, kv.WithHook(middleware.NewNamespace("app1"),
-		hook.Scope{Operations: []hook.Operation{kv.OpSet}}))
-	if err != nil {
-		t.Fatalf("kv open: %v", err)
-	}
-	t.Cleanup(func() { _ = kvs.Close() })
-	s := redisstore.New(kvs)
-	if err := s.Migrate(context.Background()); !errors.Is(err, redisstore.ErrKVRewritesKeys) {
-		t.Fatalf("Migrate on a write-scoped namespace: err = %v, want ErrKVRewritesKeys", err)
-	}
-}
-
-// The refusal must not catch hooks that leave keys alone. In grove kv v1.6.3
+// The check must not refuse hooks that leave keys alone. In grove kv v1.6.3
 // the encrypt and compress hooks do not change stored bytes at all: encrypt
 // implements no hook interface, and compress sets a flag nothing reads. So
 // this proves those two hooks are not refused, not that relay's records end

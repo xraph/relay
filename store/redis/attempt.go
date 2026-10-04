@@ -43,10 +43,10 @@ func (s *Store) RecordAttempt(ctx context.Context, a *delivery.Attempt) error {
 	if err := s.setEntity(ctx, entityKey(prefixAttempt, m.ID), m); err != nil {
 		return fmt.Errorf("relay/redis: record attempt: %w", err)
 	}
-	pipe := s.rdb.Pipeline()
-	pipe.ZAdd(ctx, zAttemptDel+m.DeliveryID, goredis.Z{Score: float64(m.AttemptNum), Member: m.ID})
-	pipe.ZAdd(ctx, zAttemptAll, goredis.Z{Score: scoreFromTime(m.AttemptedAt), Member: m.ID})
-	if _, err := pipe.Exec(ctx); err != nil {
+	pipe := s.pipeline(ctx)
+	pipe.zAdd(zAttemptDel+m.DeliveryID, goredis.Z{Score: float64(m.AttemptNum), Member: m.ID})
+	pipe.zAdd(zAttemptAll, goredis.Z{Score: scoreFromTime(m.AttemptedAt), Member: m.ID})
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: index attempt: %w", err)
 	}
 	return nil
@@ -54,7 +54,7 @@ func (s *Store) RecordAttempt(ctx context.Context, a *delivery.Attempt) error {
 
 // ListAttempts returns a delivery's attempts by attempt number.
 func (s *Store) ListAttempts(ctx context.Context, delID id.ID) ([]*delivery.Attempt, error) {
-	ids, err := s.rdb.ZRange(ctx, zAttemptDel+delID.String(), 0, -1).Result()
+	ids, err := s.zRangeAll(ctx, zAttemptDel+delID.String())
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list attempts: %w", err)
 	}
@@ -89,13 +89,17 @@ func (s *Store) PurgeAttempts(ctx context.Context, before time.Time) (int64, err
 		if err := s.getEntity(ctx, entityKey(prefixAttempt, attID), &m); err != nil && !isNotFound(err) {
 			return n, fmt.Errorf("relay/redis: purge get attempt: %w", err)
 		}
-		pipe := s.rdb.Pipeline()
-		pipe.Del(ctx, entityKey(prefixAttempt, attID))
-		pipe.ZRem(ctx, zAttemptAll, attID)
-		if m.DeliveryID != "" {
-			pipe.ZRem(ctx, zAttemptDel+m.DeliveryID, attID)
+		// The record goes through kv, which resolves its key and runs the
+		// delete hooks. A raw DEL would miss both.
+		if err := s.kv.Delete(ctx, entityKey(prefixAttempt, attID)); err != nil {
+			return n, fmt.Errorf("relay/redis: purge attempt: %w", err)
 		}
-		if _, err := pipe.Exec(ctx); err != nil {
+		pipe := s.pipeline(ctx)
+		pipe.zRem(zAttemptAll, attID)
+		if m.DeliveryID != "" {
+			pipe.zRem(zAttemptDel+m.DeliveryID, attID)
+		}
+		if err := pipe.exec(); err != nil {
 			return n, fmt.Errorf("relay/redis: purge attempt: %w", err)
 		}
 		n++

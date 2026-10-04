@@ -8,6 +8,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/xraph/grove/kv"
+
 	relay "github.com/xraph/relay"
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/id"
@@ -111,13 +113,12 @@ func (s *Store) Enqueue(ctx context.Context, d *delivery.Delivery) error {
 		return fmt.Errorf("relay/redis: enqueue delivery: %w", err)
 	}
 
-	pipe := s.rdb.Pipeline()
-	pipe.ZAdd(ctx, zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
-	pipe.ZAdd(ctx, zDeliveryEP+m.EndpointID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-	pipe.ZAdd(ctx, zDeliveryEvt+m.EventID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-	pipe.ZAdd(ctx, zDeliveryAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	pipe := s.pipeline(ctx)
+	pipe.zAdd(zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
+	pipe.zAdd(zDeliveryEP+m.EndpointID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe.zAdd(zDeliveryEvt+m.EventID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe.zAdd(zDeliveryAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: enqueue delivery indexes: %w", err)
 	}
 	s.notifyWake(ctx)
@@ -129,7 +130,7 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 		return nil
 	}
 
-	pipe := s.rdb.Pipeline()
+	pipe := s.pipeline(ctx)
 	for _, d := range ds {
 		m := toDeliveryModel(d)
 		key := entityKey(prefixDelivery, m.ID)
@@ -138,15 +139,14 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 		if err != nil {
 			return fmt.Errorf("relay/redis: enqueue batch marshal: %w", err)
 		}
-		pipe.Set(ctx, key, raw, 0)
-		pipe.ZAdd(ctx, zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
-		pipe.ZAdd(ctx, zDeliveryEP+m.EndpointID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-		pipe.ZAdd(ctx, zDeliveryEvt+m.EventID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-		pipe.ZAdd(ctx, zDeliveryAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+		pipe.set(key, raw, 0)
+		pipe.zAdd(zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
+		pipe.zAdd(zDeliveryEP+m.EndpointID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+		pipe.zAdd(zDeliveryEvt+m.EventID, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+		pipe.zAdd(zDeliveryAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	}
 
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: enqueue batch: %w", err)
 	}
 	s.notifyWake(ctx)
@@ -155,8 +155,14 @@ func (s *Store) EnqueueBatch(ctx context.Context, ds []*delivery.Delivery) error
 
 func (s *Store) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, error) {
 	// Atomically claim pending delivery IDs using Lua script.
+	// The script reads and writes KEYS[1] only, and builds no key of its own,
+	// so resolving that one key is all a namespace needs.
+	pending, err := s.physicalKey(ctx, kv.OpEval, zDeliveryPend)
+	if err != nil {
+		return nil, fmt.Errorf("relay/redis: dequeue script: %w", err)
+	}
 	nowScore := fmt.Sprintf("%f", scoreFromTime(now()))
-	result, err := dequeueScript.Run(ctx, s.rdb, []string{zDeliveryPend}, nowScore, limit).StringSlice()
+	result, err := dequeueScript.Run(ctx, s.rdb, []string{pending}, nowScore, limit).StringSlice()
 	if err != nil {
 		if isRedisNil(err) {
 			return nil, nil
@@ -209,7 +215,9 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *delivery.Delivery) error 
 
 	// If state is back to pending, re-add to the pending sorted set.
 	if d.State == delivery.StatePending {
-		s.rdb.ZAdd(ctx, zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID})
+		if err := s.zAdd(ctx, zDeliveryPend, goredis.Z{Score: scoreFromTime(m.NextAttemptAt), Member: m.ID}); err != nil {
+			return fmt.Errorf("relay/redis: requeue delivery: %w", err)
+		}
 	}
 	return nil
 }
@@ -226,7 +234,7 @@ func (s *Store) GetDelivery(ctx context.Context, delID id.ID) (*delivery.Deliver
 }
 
 func (s *Store) ListByEndpoint(ctx context.Context, epID id.ID, opts delivery.ListOpts) ([]*delivery.Delivery, error) {
-	ids, err := s.rdb.ZRange(ctx, zDeliveryEP+epID.String(), 0, -1).Result()
+	ids, err := s.zRangeAll(ctx, zDeliveryEP+epID.String())
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list by endpoint: %w", err)
 	}
@@ -254,7 +262,7 @@ func (s *Store) ListByEndpoint(ctx context.Context, epID id.ID, opts delivery.Li
 }
 
 func (s *Store) ListByEvent(ctx context.Context, evtID id.ID) ([]*delivery.Delivery, error) {
-	ids, err := s.rdb.ZRange(ctx, zDeliveryEvt+evtID.String(), 0, -1).Result()
+	ids, err := s.zRangeAll(ctx, zDeliveryEvt+evtID.String())
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list by event: %w", err)
 	}
@@ -279,7 +287,7 @@ func (s *Store) ListByEvent(ctx context.Context, evtID id.ID) ([]*delivery.Deliv
 }
 
 func (s *Store) CountPending(ctx context.Context) (int64, error) {
-	count, err := s.rdb.ZCard(ctx, zDeliveryPend).Result()
+	count, err := s.zCard(ctx, zDeliveryPend)
 	if err != nil {
 		return 0, fmt.Errorf("relay/redis: count pending: %w", err)
 	}

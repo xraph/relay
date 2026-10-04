@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/xraph/grove/kv"
+
 	relaystore "github.com/xraph/relay/store"
 )
 
@@ -18,7 +20,13 @@ var _ relaystore.WakeNotifier = (*Store)(nil)
 // failed publish only costs poll latency and is not worth failing the
 // enqueue over.
 func (s *Store) notifyWake(ctx context.Context) {
-	_ = s.rdb.Publish(ctx, wakeChannel, "").Err() //nolint:errcheck // best-effort: polling covers missed wakes
+	// The channel is resolved like a key, so a namespaced store wakes only the
+	// relays in its own namespace.
+	channel, err := s.physicalKey(ctx, kv.OpPublish, wakeChannel)
+	if err != nil {
+		return
+	}
+	_ = s.rdb.Publish(ctx, channel, "").Err() //nolint:errcheck // best-effort: polling covers missed wakes
 }
 
 // StartWakeListener subscribes to the relay wake channel and invokes wake
@@ -29,7 +37,12 @@ func (s *Store) notifyWake(ctx context.Context) {
 func (s *Store) StartWakeListener(ctx context.Context, wake func()) (func(), error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	sub := s.rdb.Subscribe(ctx, wakeChannel)
+	channel, err := s.physicalKey(ctx, kv.OpSubscr, wakeChannel)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("relay/redis: start wake listener: %w", err)
+	}
+	sub := s.rdb.Subscribe(ctx, channel)
 	// Confirm the subscription is established so callers know push is
 	// live before relying on it.
 	if _, err := sub.Receive(ctx); err != nil {

@@ -82,7 +82,7 @@ func (s *Store) RegisterType(ctx context.Context, et *catalog.EventType) error {
 	key := entityKey(prefixEventType, m.ID)
 
 	// Check if a type with this name already exists (upsert).
-	existingID, lookupErr := s.rdb.Get(ctx, uniqueEventTypeName+m.Name).Result()
+	existingID, lookupErr := s.getString(ctx, uniqueEventTypeName+m.Name)
 	if lookupErr == nil && existingID != "" && existingID != m.ID {
 		// Name already registered with a different ID — update existing.
 		var existing catalogModel
@@ -106,21 +106,21 @@ func (s *Store) RegisterType(ctx context.Context, et *catalog.EventType) error {
 		return fmt.Errorf("relay/redis: register type: %w", err)
 	}
 
-	pipe := s.rdb.Pipeline()
-	pipe.Set(ctx, uniqueEventTypeName+m.Name, m.ID, 0)
-	pipe.ZAdd(ctx, zEventTypeAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
-	pipe.SAdd(ctx, sEventTypeActive, m.ID)
+	pipe := s.pipeline(ctx)
+	pipe.set(uniqueEventTypeName+m.Name, m.ID, 0)
+	pipe.zAdd(zEventTypeAll, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+	pipe.sAdd(sEventTypeActive, m.ID)
 	if m.GroupName != "" {
-		pipe.ZAdd(ctx, zEventTypeGroup+m.GroupName, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
+		pipe.zAdd(zEventTypeGroup+m.GroupName, goredis.Z{Score: scoreFromTime(m.CreatedAt), Member: m.ID})
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	if err := pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: register type indexes: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) GetType(ctx context.Context, name string) (*catalog.EventType, error) {
-	entryID, err := s.rdb.Get(ctx, uniqueEventTypeName+name).Result()
+	entryID, err := s.getString(ctx, uniqueEventTypeName+name)
 	if err != nil {
 		if isRedisNil(err) {
 			return nil, relay.ErrEventTypeNotFound
@@ -155,7 +155,7 @@ func (s *Store) ListTypes(ctx context.Context, opts catalog.ListOpts) ([]*catalo
 		zKey = zEventTypeGroup + opts.Group
 	}
 
-	ids, err := s.rdb.ZRange(ctx, zKey, 0, -1).Result()
+	ids, err := s.zRangeAll(ctx, zKey)
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: list types: %w", err)
 	}
@@ -183,7 +183,7 @@ func (s *Store) ListTypes(ctx context.Context, opts catalog.ListOpts) ([]*catalo
 }
 
 func (s *Store) DeleteType(ctx context.Context, name string) error {
-	entryID, err := s.rdb.Get(ctx, uniqueEventTypeName+name).Result()
+	entryID, err := s.getString(ctx, uniqueEventTypeName+name)
 	if err != nil {
 		if isRedisNil(err) {
 			return relay.ErrEventTypeNotFound
@@ -208,12 +208,14 @@ func (s *Store) DeleteType(ctx context.Context, name string) error {
 	if err := s.setEntity(ctx, key, &m); err != nil {
 		return fmt.Errorf("relay/redis: delete type update: %w", err)
 	}
-	s.rdb.SRem(ctx, sEventTypeActive, entryID)
+	if err := s.sRem(ctx, sEventTypeActive, entryID); err != nil {
+		return fmt.Errorf("relay/redis: delete type index: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) MatchTypes(ctx context.Context, pattern string) ([]*catalog.EventType, error) {
-	ids, err := s.rdb.SMembers(ctx, sEventTypeActive).Result()
+	ids, err := s.sMembers(ctx, sEventTypeActive)
 	if err != nil {
 		return nil, fmt.Errorf("relay/redis: match types: %w", err)
 	}

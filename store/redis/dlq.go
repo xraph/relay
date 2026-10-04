@@ -10,6 +10,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/xraph/grove/kv"
+
 	relay "github.com/xraph/relay"
 	"github.com/xraph/relay/dlq"
 	"github.com/xraph/relay/id"
@@ -108,16 +110,15 @@ func (s *Store) Push(ctx context.Context, entry *dlq.Entry) error {
 		return fmt.Errorf("relay/redis: push dlq: %w", err)
 	}
 
-	pipe := s.rdb.Pipeline()
-	pipe.ZAdd(ctx, zDLQAll, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
+	pipe := s.pipeline(ctx)
+	pipe.zAdd(zDLQAll, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
 	if m.TenantID != "" {
-		pipe.ZAdd(ctx, zDLQTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
+		pipe.zAdd(zDLQTenant+m.TenantID, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
 	}
 	if m.EndpointID != "" {
-		pipe.ZAdd(ctx, zDLQEndpoint+m.EndpointID, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
+		pipe.zAdd(zDLQEndpoint+m.EndpointID, goredis.Z{Score: scoreFromTime(m.FailedAt), Member: m.ID})
 	}
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	if err = pipe.exec(); err != nil {
 		return fmt.Errorf("relay/redis: push dlq indexes: %w", err)
 	}
 	return nil
@@ -190,7 +191,13 @@ func (s *Store) GetDLQ(ctx context.Context, dlqID id.ID) (*dlq.Entry, error) {
 // between the read and the write would be undone by the write bringing the
 // deleted row back.
 func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error {
-	key := entityKey(prefixDLQ, dlqID.String())
+	// WATCH, GET and SET are raw commands, so the key is resolved here, once,
+	// and the same physical key is used for all three. It is the key kv's
+	// SetRaw wrote the record under.
+	key, keyErr := s.physicalKey(ctx, kv.OpSet, entityKey(prefixDLQ, dlqID.String()))
+	if keyErr != nil {
+		return fmt.Errorf("relay/redis: mark replayed: %w", keyErr)
+	}
 	claim := func(tx *goredis.Tx) error {
 		raw, err := tx.Get(ctx, key).Bytes()
 		if errors.Is(err, goredis.Nil) {
@@ -221,11 +228,11 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 
 	const attempts = 16
 	for i := 0; i < attempts; i++ {
-		err := s.rdb.Watch(ctx, claim, key)
-		if errors.Is(err, goredis.TxFailedErr) {
+		watchErr := s.rdb.Watch(ctx, claim, key)
+		if errors.Is(watchErr, goredis.TxFailedErr) {
 			continue // someone wrote the entry between our read and write
 		}
-		return err
+		return watchErr
 	}
 	return fmt.Errorf("relay/redis: mark replayed: still contended after %d attempts", attempts)
 }
@@ -239,7 +246,10 @@ func (s *Store) MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) err
 // Under WATCH for the same reason as the claim: a plain read then write would
 // restore a row that a Purge deleted in between.
 func (s *Store) ReleaseReplay(ctx context.Context, dlqID id.ID) error {
-	key := entityKey(prefixDLQ, dlqID.String())
+	key, keyErr := s.physicalKey(ctx, kv.OpSet, entityKey(prefixDLQ, dlqID.String()))
+	if keyErr != nil {
+		return fmt.Errorf("relay/redis: release replay: %w", keyErr)
+	}
 	release := func(tx *goredis.Tx) error {
 		raw, err := tx.Get(ctx, key).Bytes()
 		if errors.Is(err, goredis.Nil) {
@@ -266,11 +276,11 @@ func (s *Store) ReleaseReplay(ctx context.Context, dlqID id.ID) error {
 
 	const attempts = 16
 	for i := 0; i < attempts; i++ {
-		err := s.rdb.Watch(ctx, release, key)
-		if errors.Is(err, goredis.TxFailedErr) {
+		watchErr := s.rdb.Watch(ctx, release, key)
+		if errors.Is(watchErr, goredis.TxFailedErr) {
 			continue
 		}
-		return err
+		return watchErr
 	}
 	return fmt.Errorf("relay/redis: release replay: still contended after %d attempts", attempts)
 }
@@ -302,7 +312,7 @@ func (s *Store) Purge(ctx context.Context, before time.Time) (int64, error) {
 }
 
 func (s *Store) CountDLQ(ctx context.Context) (int64, error) {
-	count, err := s.rdb.ZCard(ctx, zDLQAll).Result()
+	count, err := s.zCard(ctx, zDLQAll)
 	if err != nil {
 		return 0, fmt.Errorf("relay/redis: count dlq: %w", err)
 	}
@@ -311,15 +321,18 @@ func (s *Store) CountDLQ(ctx context.Context) (int64, error) {
 
 // deleteDLQEntry removes a DLQ entry and its index entries.
 func (s *Store) deleteDLQEntry(ctx context.Context, entryID, tenantID, endpointID string) error {
-	pipe := s.rdb.Pipeline()
-	pipe.Del(ctx, entityKey(prefixDLQ, entryID))
-	pipe.ZRem(ctx, zDLQAll, entryID)
+	// The record goes through kv, which resolves its key and runs the delete
+	// hooks. A raw DEL would miss both.
+	if err := s.kv.Delete(ctx, entityKey(prefixDLQ, entryID)); err != nil {
+		return err
+	}
+	pipe := s.pipeline(ctx)
+	pipe.zRem(zDLQAll, entryID)
 	if tenantID != "" {
-		pipe.ZRem(ctx, zDLQTenant+tenantID, entryID)
+		pipe.zRem(zDLQTenant+tenantID, entryID)
 	}
 	if endpointID != "" {
-		pipe.ZRem(ctx, zDLQEndpoint+endpointID, entryID)
+		pipe.zRem(zDLQEndpoint+endpointID, entryID)
 	}
-	_, err := pipe.Exec(ctx)
-	return err
+	return pipe.exec()
 }
