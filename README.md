@@ -259,8 +259,9 @@ rdb.Open(ctx, "redis://localhost:6379")
 kvStore, _ := kv.Open(rdb)
 
 store := redisstore.New(kvStore)
-// Builds the every-tenant endpoint index, and refuses a kv store that rewrites
-// keys. Don't ignore this error: it's the only place that refusal shows up.
+// Builds the every-tenant endpoint index, and checks that the kv store maps keys
+// in a way relay can follow. Don't ignore this error: it's the only place that
+// check shows up.
 if err := store.Migrate(ctx); err != nil {
     log.Fatal(err)
 }
@@ -268,10 +269,33 @@ if err := store.Migrate(ctx); err != nil {
 r, _ := relay.New(relay.WithStore(store))
 ```
 
-Don't give it a kv store with a namespace hook. Relay reads some keys through
-the raw client and the rest through kv, and needs both to mean the same key.
-Under a namespace, deletes silently do nothing and replay can't find its
-records. `Migrate` checks for this and returns `ErrKVRewritesKeys`.
+You can give it a kv store with a namespace hook, so two relays share one redis
+without sharing data:
+
+```go
+kvStore, _ := kv.Open(rdb, kv.WithHook(middleware.NewNamespace("app1")))
+```
+
+Every key relay touches lands under the prefix. That covers the records, the
+endpoint, event, delivery and DLQ indexes, the idempotency keys, the replay
+claim, the delivery queue, the migration markers and the wake channel. Two
+stores on one redis with different namespaces can use the same tenant ids and
+never see each other's rows. Each namespace builds its own indexes, so every
+new namespace needs its own `Migrate`, and an every-tenant list returns
+`ErrEndpointIndexNotBuilt` until it has run.
+
+You need grove v1.7.0 or later, and relay's redis store won't build against
+anything older. Earlier versions ignored the hook on deletes and on most
+commands besides get and set, so a deleted endpoint stayed in redis with its
+secret.
+
+The namespace has to cover every command. A hook scoped to reads only, or to
+writes only, would write a record under one name and look for it under another,
+and relay can't tell which name is the real one. `Migrate` returns
+`ErrKVKeysInconsistent` for that before it writes anything. It does the same
+for a rewrite that isn't a prefix, such as a suffix, because a scan can't undo
+it. `ErrKVRewritesKeys` is the old name for the same error. It still matches,
+and it's deprecated.
 
 ### MongoDB
 

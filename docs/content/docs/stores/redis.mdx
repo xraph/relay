@@ -109,40 +109,87 @@ from it until the backfill runs again, which happens within a day of
 redeploying. To repair it straight away, delete `relay:migrated:ep_all:v1` and
 restart, or call `Migrate()`.
 
-## Key-rewriting kv hooks are not supported
+## Namespaced kv stores
 
-Pass `redisstore.New` a kv store without a namespace hook.
+Pass `redisstore.New` a kv store with a namespace hook if you want two relays on
+one redis, each with its own data:
 
-The store reads and writes some keys through the raw go-redis client (every
-sorted-set and set index, and the replay claim) and the rest through kv (the
-records). That only works if both clients mean the same key by the same name.
-A namespace hook moves the records under a prefix the raw client never sees,
-and nothing errors. Instead:
+```go
+kvStore, _ := kv.Open(rdb, kv.WithHook(middleware.NewNamespace("app1")))
+store := redisstore.New(kvStore)
+```
 
-- deleting an endpoint leaves its record, secret included, in redis;
-- a replayed DLQ entry's record is never removed;
-- replay cannot find any record, and answers "dlq entry not found";
-- two relays sharing one redis still collide on every index key, so the
-  namespace does not isolate them anyway.
+The store sends commands two ways. Records go through kv, so the hook moves
+them under the prefix. Every sorted-set and set index, the idempotency keys, the
+replay claim (a WATCH/MULTI transaction), the delivery queue (a Lua script), the
+migration markers and the wake channel go through the raw go-redis client, which
+no hook ever sees. So the store resolves each of those keys itself, by running
+the kv store's hooks over the key the way grove does for the matching kv command,
+and sends the result to redis. Record ids are the only thing stored inside an
+index, and the Lua script builds no keys of its own, so the keys passed in are the
+only ones there are.
 
-`Migrate()` checks for this before anything else and returns
-`ErrKVRewritesKeys` if it finds it. It probes both ways: a key written through
-kv has to be where the raw client expects it, and a key written through the raw
-client has to be readable through kv. That catches a namespace applied to reads
-only, to writes only, or to both.
+What that gets you:
 
-It refuses only on proof. A failed refusal stops the app booting, so a probe
-that simply goes missing, which is what replication lag or eviction looks like
-behind a proxy that reads from replicas, is not treated as proof and passes.
-That makes the check best-effort. It can miss a rewrite in that situation, but
-it will not refuse a store that works.
+- two namespaces can use the same tenant ids, idempotency keys and event type
+  names without seeing each other's rows;
+- lists, indexes, gets and deletes see their own namespace only, and a delete
+  removes the record under its namespaced key;
+- replay and the claim work per namespace, and `Purge` only removes its own
+  entries;
+- `Dequeue` claims from its own queue, and the wake channel only wakes the
+  relays in the same namespace;
+- `Migrate` builds each namespace's global indexes from that namespace's own
+  per-tenant indexes, and its markers are namespaced too. A new namespace needs
+  its own `Migrate` call, and an every-tenant list returns
+  `ErrEndpointIndexNotBuilt` until then.
 
-It leaves no keys behind. The probes carry a one-minute TTL, so they clean up
-even in the case where nothing can delete them.
+You need grove v1.7.0 or later. Earlier versions ignored the hook on deletes,
+multi-key reads and every collection command, so a namespaced store left deleted
+records in place. Relay's redis store uses `kv.ErrHookKeyCount`, which arrived in
+v1.7.0, so it won't compile against an older grove.
 
-Other hooks are not refused. Note that in grove kv v1.6.3 the encrypt and
-compress hooks do not change what gets stored: records, endpoint secrets
-included, are written in plain text whether or not you add them.
+### What `Migrate` refuses
+
+A namespace has to apply to every command, and has to be a prefix. `Migrate`
+resolves a probe key under every command the store uses (get, set, delete,
+exists, scan, the sorted-set and set commands, and eval) and returns
+`ErrKVKeysInconsistent` if they don't all give the same key, or if the result
+isn't the probe with something put in front of it.
+
+That refuses a namespace scoped to reads only, one scoped to writes only, one that
+skips a single command such as scan, and a hook that appends to keys instead of
+prefixing them. For the first three there is no right answer to give: kv would
+write a record at one name and read it from another, so every read after a write
+misses. The last can't be undone by a scan, and the migration scans to find
+indexes. Because the check runs locally, it writes nothing to redis when it
+refuses.
+
+`ErrKVRewritesKeys` is the old name for the same error. It's deprecated, still
+matches, and a store that namespaces every key no longer returns it.
+
+The check then confirms that the key the store computes is the key kv really uses.
+It writes a probe through kv and deletes it at the computed key, then writes one at
+the computed key and reads it through kv. That guards against grove changing how it
+hands keys to hooks, which the store mirrors because grove doesn't export it. A
+failure here returns the same error.
+
+This second step refuses only on proof. A failed refusal stops the app booting, so
+a probe that simply goes missing, which is what replication lag or eviction looks
+like behind a proxy that reads from replicas, is not treated as proof and passes.
+It can miss a disagreement in that situation, but it won't refuse a store that
+works. The probes carry a one-minute TTL, so they clean up even when nothing can
+delete them.
+
+Other hooks are not refused. In grove kv v1.7.0 the encrypt and compress hooks
+still don't change what gets stored: records, endpoint secrets included, are
+written in plain text whether or not you add them.
+
+Hooks that run before every command see the store's raw commands too, but only
+their pre-query half. A hook that denies a command makes the matching raw
+command fail with `kv.ErrHookDenied`, and nothing in a pipeline is sent if one
+of its keys is denied. Logging and metrics hooks see one call per key resolved,
+not one per redis command.
 
 If you set `DisableMigrate`, this check does not run.
 
