@@ -9,6 +9,10 @@ import (
 	"sync"
 	"testing"
 
+	gu "github.com/xraph/go-utils/metrics"
+
+	"github.com/xraph/relay/observability"
+
 	"github.com/xraph/relay"
 	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
@@ -46,11 +50,12 @@ func RunAcceptanceSuite(t *testing.T, s AcceptanceBackend) {
 			t.Fatal("endpoint scope lost")
 		}
 	}
-	first, err := relay.New(relay.WithStore(s))
+	metrics := observability.NewMetrics(gu.NewMetricsCollector("acceptance-suite"))
+	first, err := relay.New(relay.WithStore(s), relay.WithMetrics(metrics))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := relay.New(relay.WithStore(s))
+	second, err := relay.New(relay.WithStore(s), relay.WithMetrics(metrics))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +88,9 @@ func RunAcceptanceSuite(t *testing.T, s AcceptanceBackend) {
 		if !reflect.DeepEqual(original, r) {
 			t.Fatal("duplicate receipt changed")
 		}
+	}
+	if metrics.EventsSentTotal.Value() != 1 || metrics.PendingDeliveries.Value() != 2 {
+		t.Fatalf("concurrent acceptance metrics: events=%v pending=%v", metrics.EventsSentTotal.Value(), metrics.PendingDeliveries.Value())
 	}
 	if len(original.Recipients) != 2 {
 		t.Fatalf("recipients = %d", len(original.Recipients))

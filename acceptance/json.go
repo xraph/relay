@@ -93,14 +93,9 @@ func readValue(d *json.Decoder, depth int) (any, error) {
 func normalizeNumber(s string) (json.Number, error) {
 	negative := strings.HasPrefix(s, "-")
 	s = strings.TrimPrefix(s, "-")
-	mantissa, exponent := s, 0
+	mantissa, exponentText, exponent := s, "", 0
 	if i := strings.IndexAny(s, "eE"); i >= 0 {
-		mantissa = s[:i]
-		n, e := strconv.Atoi(s[i+1:])
-		if e != nil || n < -10000 || n > 10000 {
-			return "", ErrInvalid
-		}
-		exponent = n
+		mantissa, exponentText = s[:i], s[i+1:]
 	}
 	if i := strings.IndexByte(mantissa, '.'); i >= 0 {
 		exponent -= len(mantissa) - i - 1
@@ -113,6 +108,18 @@ func normalizeNumber(s string) (json.Number, error) {
 	trimmed := strings.TrimRight(mantissa, "0")
 	exponent += len(mantissa) - len(trimmed)
 	mantissa = trimmed
+	if exponentText != "" {
+		n, err := strconv.Atoi(exponentText)
+		// No bounded input can shift an exponent farther than its byte length.
+		// Reject impossible candidates before addition, which also prevents overflow.
+		if err != nil || n < -MaxDataBytes-10000 || n > MaxDataBytes+10000 {
+			return "", ErrInvalid
+		}
+		exponent += n
+	}
+	if exponent < -10000 || exponent > 10000 {
+		return "", ErrInvalid
+	}
 	if negative {
 		mantissa = "-" + mantissa
 	}

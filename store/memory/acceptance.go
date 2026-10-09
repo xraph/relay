@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/internal/acceptanceobs"
 	"github.com/xraph/relay/internal/acceptanceutil"
 )
 
@@ -72,5 +73,6 @@ func (s *Store) AcceptEvent(ctx context.Context, req acceptance.Request, maxAtte
 		s.deliveries[d.ID.String()] = d
 	}
 	s.receipts[req.Identity()] = receipt
+	acceptanceobs.MarkNewCommit(ctx)
 	return receipt.Clone(), nil
 }

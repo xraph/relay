@@ -82,6 +82,7 @@ func (r *Relay) RegisterEventType(ctx context.Context, def catalog.WebhookDefini
 // Idempotency keys remain key-only no-ops; use SendReliable for content-bound
 // receipts and recovery across catalog changes and event retention.
 func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
+	defer r.engine.SyncPending(ctx)
 	// 1. Validate event type exists.
 	et, err := r.catalog.GetType(ctx, evt.Type)
 	if err != nil {
@@ -115,7 +116,6 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 		r.engine.Wake()
 		if r.metrics != nil && count > 0 {
 			r.metrics.EventsSentTotal.Inc()
-			r.metrics.PendingDeliveries.Add(float64(count))
 		}
 		return nil
 	}
@@ -167,7 +167,6 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 
 	if r.metrics != nil {
 		r.metrics.EventsSentTotal.Inc()
-		r.metrics.PendingDeliveries.Add(float64(len(deliveries)))
 	}
 
 	r.logger.Debug("event sent",

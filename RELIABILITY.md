@@ -39,8 +39,10 @@ encoding of the normalized request with an explicit version field. Object keys
 are sorted, exact decimal values retain all digits, equivalent numeric forms
 normalize together, and duplicate keys, invalid UTF-8, unpaired Unicode
 surrogates and NUL escapes are rejected. Requests allow at most 1 MiB of JSON,
-64 nested containers, 256 bytes per identifier and decimal exponents from
--10000 to 10000. Acceptance allows at most 1000 enabled endpoint candidates in
+64 nested containers, 256 bytes per identifier and normalized nonzero decimal
+exponents from -10000 to 10000. The exponent bound applies after decimal-point
+and trailing-zero normalization, so accepted canonical output is accepted again.
+Zero normalizes to `0` without retaining its written exponent. Acceptance allows at most 1000 enabled endpoint candidates in
 the exact scope, including candidates whose subscriptions don't match.
 
 The receipt pins the event ID, acceptance time, endpoint membership and delivery
@@ -69,6 +71,35 @@ idempotency. Acceptance does not promise exactly-once HTTP delivery.
 Engine wakes happen after commit. PostgreSQL notification failure does not undo
 acceptance, and polling remains the recovery mechanism. An uncertain commit
 error requires retrying the same request to recover the stored receipt.
+
+## Metrics
+
+`relay_pending_deliveries` is the last successful `CountPending` snapshot from
+storage. Relay samples on engine start, send completion (including uncertain
+outcomes), dequeue and attempt completion. Each sample has a 250 ms deadline
+covering both admission and storage access. Samples sharing a metrics object are
+serialized; a failed sample keeps the previous value and logs the failure. A
+sampling failure does not change an accepted result, and no background goroutine
+is started per acceptance. Treat the gauge as sampled state, not a durable
+accounting ledger or a promise that storage is currently reachable.
+
+PostgreSQL counts queued `pending` rows and excludes `delivering` rows. Memory
+keeps a claimed row in its pending state until its next state update, so its
+snapshot includes that in-flight row. Neither definition means every unfinished
+HTTP effect. The gauge uses no acceptance increments or terminal decrements;
+retries, recovered receipts and process restarts cannot drive it negative.
+
+For reliable sends, `relay_events_sent_total` counts new commits observed by this
+process through an optional context observation. Memory and PostgreSQL report that
+observation without changing receipts or the `acceptance.Store` interface. A recovered receipt does
+not increment the counter. An unknown commit acknowledgement can leave this
+counter below the durable acceptance count, and a restart does not reconstruct
+its history. The root always calls the normal `AcceptEvent` method, preserving wrapper
+interception. A custom store that does not report commit observations, or a
+wrapper that drops the request context, still sends reliably but cannot report
+a new-commit observation through this counter. Legacy
+sends retain their successful-fanout event counting. Do not sum these counters
+as a durable acceptance total across restarts or use them to verify receipts.
 
 ## Migration and legacy calls
 

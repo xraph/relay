@@ -88,6 +88,7 @@ func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Lo
 // Start begins the delivery workers and poll loop.
 func (e *Engine) Start(ctx context.Context) {
 	ctx, e.cancel = context.WithCancel(ctx)
+	e.SyncPending(ctx)
 
 	e.wg.Add(1)
 	go func() {
@@ -145,6 +146,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			e.logger.Error("dequeue failed", log.Any("error", err))
 		}
 
+		e.SyncPending(ctx)
 		if len(batch) > 0 {
 			interval = e.config.PollInterval
 		} else {
@@ -175,6 +177,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 // process handles a single delivery: fetch endpoint + event, send, decide, update.
 func (e *Engine) process(ctx context.Context, d *Delivery) {
+	defer e.SyncPending(ctx)
 	// Start a tracing span for this delivery attempt.
 	var span trace.Span
 	if e.config.Tracer != nil {
@@ -241,7 +244,6 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		d.CompletedAt = &now
 		if e.config.Metrics != nil {
 			e.config.Metrics.RecordDelivery("delivered", latencySeconds)
-			e.config.Metrics.PendingDeliveries.Dec()
 		}
 		e.logger.Debug("delivered",
 			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.Int("latency_ms", result.LatencyMs))
@@ -271,7 +273,6 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		}
 		if e.config.Metrics != nil {
 			e.config.Metrics.RecordDelivery("failed", latencySeconds)
-			e.config.Metrics.PendingDeliveries.Dec()
 			e.config.Metrics.DLQSize.Inc()
 		}
 		e.logger.Warn("delivery failed permanently",
@@ -293,7 +294,6 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		}
 		if e.config.Metrics != nil {
 			e.config.Metrics.RecordDelivery("failed", latencySeconds)
-			e.config.Metrics.PendingDeliveries.Dec()
 			e.config.Metrics.DLQSize.Inc()
 		}
 		e.logger.Warn("endpoint disabled (410 Gone)",
@@ -354,5 +354,20 @@ func (e *Engine) release(ctx context.Context, d *Delivery, err, gone error, reas
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 		e.logger.Error("release delivery failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+	}
+}
+
+// SyncPending refreshes the pending gauge when the store exposes its counter.
+// Custom engine stores without this optional capability leave it unchanged.
+func (e *Engine) SyncPending(ctx context.Context) {
+	if e.config.Metrics == nil {
+		return
+	}
+	counter, ok := e.store.(observability.PendingCounter)
+	if !ok {
+		return
+	}
+	if err := e.config.Metrics.SyncPending(ctx, counter); err != nil {
+		e.logger.Debug("pending delivery count unavailable", log.Any("error", err))
 	}
 }

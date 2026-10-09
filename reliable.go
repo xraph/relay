@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/xraph/relay/acceptance"
+	"github.com/xraph/relay/internal/acceptanceobs"
 )
 
 // SendReliable atomically accepts an event and its complete scoped fanout. The
@@ -19,9 +20,17 @@ func (r *Relay) SendReliable(ctx context.Context, req acceptance.Request) (*acce
 	if err != nil {
 		return nil, err
 	}
+	defer r.engine.SyncPending(ctx)
+	var observation *acceptanceobs.CommitObservation
+	if r.metrics != nil {
+		ctx, observation = acceptanceobs.WithCommitObservation(ctx)
+	}
 	receipt, err := s.AcceptEvent(ctx, req, r.config.MaxRetries)
 	if err != nil {
 		return nil, err
+	}
+	if observation != nil && observation.Created() {
+		r.metrics.EventsSentTotal.Inc()
 	}
 	r.engine.Wake()
 	return receipt, nil

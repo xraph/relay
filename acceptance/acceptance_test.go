@@ -57,3 +57,29 @@ func TestIdentityAndFingerprintBindings(t *testing.T) {
 		t.Fatal("unbounded source fingerprint")
 	}
 }
+
+func TestCanonicalExponentBoundaries(t *testing.T) {
+	for input, want := range map[string]string{
+		"1e10000": "1e10000", "1e-10000": "1e-10000",
+		"10e-10001": "1e-10000", "0.1e10001": "1e10000",
+		"10e9999": "1e10000", "0.1e-9999": "1e-10000",
+		"-0e999999999999999999999999": "0",
+	} {
+		first, err := acceptance.CanonicalJSON([]byte(input))
+		if err != nil {
+			t.Fatalf("%s: %v", input, err)
+		}
+		if string(first) != want {
+			t.Fatalf("%s: got %s want %s", input, first, want)
+		}
+		second, err := acceptance.CanonicalJSON(first)
+		if err != nil || !bytes.Equal(first, second) {
+			t.Fatalf("unstable %s: %s %v", input, second, err)
+		}
+	}
+	for _, input := range []string{"10e10000", "0.1e-10000", "1e10001", "1e-10001", "1e9223372036854775807", "10e9223372036854775807"} {
+		if _, err := acceptance.CanonicalJSON([]byte(input)); err == nil {
+			t.Fatalf("accepted out-of-domain %s", input)
+		}
+	}
+}

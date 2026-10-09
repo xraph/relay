@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/internal/acceptanceobs"
 	"github.com/xraph/relay/internal/acceptanceutil"
 )
 
@@ -117,5 +118,6 @@ func (s *Store) AcceptEvent(ctx context.Context, req acceptance.Request, maxAtte
 		return nil, checkErr
 	}
 	s.notifyWake(ctx)
+	acceptanceobs.MarkNewCommit(ctx)
 	return receipt, nil
 }
