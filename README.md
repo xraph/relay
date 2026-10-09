@@ -78,6 +78,13 @@ func main() {
 }
 ```
 
+## Reliable acceptance
+
+Use `SendReliable` when your producer retries unknown outcomes. Memory and
+PostgreSQL atomically persist an event, its complete scoped fanout and a retained
+receipt. See [reliable event acceptance](RELIABILITY.md) for the request contract,
+migration, retention rules and delivery guarantees.
+
 ## Configuration
 
 All options are set via functional options on `relay.New()`:

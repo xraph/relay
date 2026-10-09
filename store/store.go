@@ -44,3 +44,9 @@ type Store interface {
 	// Close closes the store connection.
 	Close() error
 }
+
+// AtomicSender preserves legacy Send semantics while committing event and fanout
+// together. Reliable integrations must use acceptance.Store instead.
+type AtomicSender interface {
+	SendEvent(context.Context, *event.Event, int) (int, error)
+}

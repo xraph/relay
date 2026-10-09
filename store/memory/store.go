@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xraph/relay"
+	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
@@ -34,12 +35,14 @@ type Store struct {
 	dlqEntries      map[string]*dlq.Entry          // keyed by ID string
 	attempts        map[string][]*delivery.Attempt // keyed by delivery ID string
 
-	closed bool
+	receipts map[string]*acceptance.Receipt
+	closed   bool
 }
 
 // New creates a new in-memory store.
 func New() *Store {
 	return &Store{
+		receipts:        make(map[string]*acceptance.Receipt),
 		eventTypes:      make(map[string]*catalog.EventType),
 		eventTypesByID:  make(map[string]*catalog.EventType),
 		endpoints:       make(map[string]*endpoint.Endpoint),
@@ -87,15 +90,16 @@ func (s *Store) RegisterType(_ context.Context, et *catalog.EventType) error {
 	defer s.mu.Unlock()
 
 	if existing, ok := s.eventTypes[et.Definition.Name]; ok {
-		existing.Definition = et.Definition
+		existing.Definition = copyEventType(et).Definition
 		existing.UpdatedAt = time.Now().UTC()
-		existing.Metadata = et.Metadata
+		existing.Metadata = copyEventType(et).Metadata
 		et.ID = existing.ID
 		return nil
 	}
 
-	s.eventTypes[et.Definition.Name] = et
-	s.eventTypesByID[et.ID.String()] = et
+	snapshot := copyEventType(et)
+	s.eventTypes[et.Definition.Name] = snapshot
+	s.eventTypesByID[et.ID.String()] = snapshot
 	return nil
 }
 
@@ -108,7 +112,7 @@ func (s *Store) GetType(_ context.Context, name string) (*catalog.EventType, err
 	if !ok {
 		return nil, relay.ErrEventTypeNotFound
 	}
-	return et, nil
+	return copyEventType(et), nil
 }
 
 // GetTypeByID returns an event type by its TypeID.
@@ -120,7 +124,7 @@ func (s *Store) GetTypeByID(_ context.Context, etID id.ID) (*catalog.EventType, 
 	if !ok {
 		return nil, relay.ErrEventTypeNotFound
 	}
-	return et, nil
+	return copyEventType(et), nil
 }
 
 // ListTypes returns all registered event types, optionally filtered.
@@ -136,7 +140,7 @@ func (s *Store) ListTypes(_ context.Context, opts catalog.ListOpts) ([]*catalog.
 		if opts.Group != "" && et.Definition.Group != opts.Group {
 			continue
 		}
-		result = append(result, et)
+		result = append(result, copyEventType(et))
 	}
 
 	sort.Slice(result, func(i, j int) bool {
@@ -175,7 +179,7 @@ func (s *Store) MatchTypes(_ context.Context, pattern string) ([]*catalog.EventT
 			continue
 		}
 		if catalog.Match(pattern, et.Definition.Name) {
-			result = append(result, et)
+			result = append(result, copyEventType(et))
 		}
 	}
 	return result, nil
@@ -190,7 +194,7 @@ func (s *Store) CreateEndpoint(_ context.Context, ep *endpoint.Endpoint) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.endpoints[ep.ID.String()] = ep
+	s.endpoints[ep.ID.String()] = copyEndpoint(ep)
 	return nil
 }
 
@@ -203,7 +207,7 @@ func (s *Store) GetEndpoint(_ context.Context, epID id.ID) (*endpoint.Endpoint, 
 	if !ok {
 		return nil, relay.ErrEndpointNotFound
 	}
-	return ep, nil
+	return copyEndpoint(ep), nil
 }
 
 // UpdateEndpoint modifies an existing endpoint.
@@ -215,7 +219,7 @@ func (s *Store) UpdateEndpoint(_ context.Context, ep *endpoint.Endpoint) error {
 		return relay.ErrEndpointNotFound
 	}
 	ep.UpdatedAt = time.Now().UTC()
-	s.endpoints[ep.ID.String()] = ep
+	s.endpoints[ep.ID.String()] = copyEndpoint(ep)
 	return nil
 }
 
@@ -246,7 +250,7 @@ func (s *Store) ListEndpoints(_ context.Context, tenantID string, opts endpoint.
 		if opts.Enabled != nil && ep.Enabled != *opts.Enabled {
 			continue
 		}
-		result = append(result, ep)
+		result = append(result, copyEndpoint(ep))
 	}
 
 	// created_at alone is not a total order: equal timestamps come back in an
@@ -276,7 +280,7 @@ func (s *Store) Resolve(_ context.Context, tenantID, eventType string) ([]*endpo
 		}
 		for _, pattern := range ep.EventTypes {
 			if catalog.Match(pattern, eventType) {
-				result = append(result, ep)
+				result = append(result, copyEndpoint(ep))
 				break
 			}
 		}

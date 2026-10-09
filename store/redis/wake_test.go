@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	redismodule "github.com/testcontainers/testcontainers-go/modules/redis"
 
@@ -27,7 +28,7 @@ func startRedis(t *testing.T) string {
 	}
 
 	ctx := context.Background()
-	ctr, err := redismodule.Run(ctx, "redis:7-alpine")
+	ctr, err := redismodule.Run(ctx, "redis:7-alpine", testcontainers.WithHostConfigModifier(func(h *container.HostConfig) { h.Memory = 128 << 20; h.NanoCPUs = 1_000_000_000 }))
 	if err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
 	}

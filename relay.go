@@ -77,15 +77,10 @@ func (r *Relay) RegisterEventType(ctx context.Context, def catalog.WebhookDefini
 	return r.catalog.RegisterType(ctx, def, opts...)
 }
 
-// Send validates and persists an event, then fans out deliveries to matching endpoints.
-//
-// The critical path:
-//  1. Look up event type from the catalog (reject unknown types).
-//  2. Check if the event type is deprecated (reject if so).
-//  3. Validate the event payload against the JSON Schema (if configured).
-//  4. Persist the event (idempotency key dedup is handled here).
-//  5. Resolve matching endpoints for this tenant + event type.
-//  6. Enqueue one delivery per matched endpoint.
+// Send validates an event and fans out deliveries. Memory and PostgreSQL commit
+// event and fanout atomically. Other stores retain the legacy sequential path.
+// Idempotency keys remain key-only no-ops; use SendReliable for content-bound
+// receipts and recovery across catalog changes and event retention.
 func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 	// 1. Validate event type exists.
 	et, err := r.catalog.GetType(ctx, evt.Type)
@@ -111,6 +106,19 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 	appID, orgID := scope.Capture(ctx)
 	evt.ScopeAppID = appID
 	evt.ScopeOrgID = orgID
+
+	if atomic, ok := r.store.(store.AtomicSender); ok {
+		count, sendErr := atomic.SendEvent(ctx, evt, r.config.MaxRetries)
+		if sendErr != nil {
+			return fmt.Errorf("relay: atomic send: %w", sendErr)
+		}
+		r.engine.Wake()
+		if r.metrics != nil && count > 0 {
+			r.metrics.EventsSentTotal.Inc()
+			r.metrics.PendingDeliveries.Add(float64(count))
+		}
+		return nil
+	}
 
 	// Persist the event. Idempotency key conflicts return a no-op success.
 	if createErr := r.store.CreateEvent(ctx, evt); createErr != nil {

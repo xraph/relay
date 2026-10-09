@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -32,6 +33,7 @@ func startPostgres(t *testing.T) string {
 		tcpostgres.WithUsername("relay"),
 		tcpostgres.WithPassword("relay"),
 		tcpostgres.BasicWaitStrategies(),
+		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) { h.Memory = 256 << 20; h.NanoCPUs = 1_000_000_000 }),
 	)
 	if err != nil {
 		t.Skipf("container runtime unavailable: %v", err)

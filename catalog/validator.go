@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -53,7 +54,9 @@ func (v *Validator) compile(schema any) (*jsonschema.Schema, error) {
 
 	// Parse the schema JSON into an any value for the compiler.
 	var doc any
-	if unmarshalErr := json.Unmarshal(raw, &doc); unmarshalErr != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if unmarshalErr := decoder.Decode(&doc); unmarshalErr != nil {
 		return nil, fmt.Errorf("unmarshal schema: %w", unmarshalErr)
 	}
 

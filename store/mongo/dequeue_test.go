@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcmongo "github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -31,7 +32,7 @@ func startMongo(t *testing.T) string {
 	}
 
 	ctx := context.Background()
-	ctr, err := tcmongo.Run(ctx, "mongo:7")
+	ctr, err := tcmongo.Run(ctx, "mongo:7", testcontainers.WithHostConfigModifier(func(h *container.HostConfig) { h.Memory = 512 << 20; h.NanoCPUs = 1_000_000_000 }))
 	if err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
 	}

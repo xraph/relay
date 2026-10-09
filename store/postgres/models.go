@@ -93,6 +93,8 @@ type endpointModel struct {
 	grove.BaseModel `grove:"table:relay_endpoints"`
 
 	ID          string            `grove:"id,pk"`
+	ScopeAppID  string            `grove:"scope_app_id"`
+	ScopeOrgID  string            `grove:"scope_org_id"`
 	TenantID    string            `grove:"tenant_id"`
 	URL         string            `grove:"url"`
 	Description string            `grove:"description"`
@@ -118,6 +120,8 @@ func toEndpointModel(ep *endpoint.Endpoint) *endpointModel {
 	return &endpointModel{
 		ID:          ep.ID.String(),
 		TenantID:    ep.TenantID,
+		ScopeAppID:  ep.ScopeAppID,
+		ScopeOrgID:  ep.ScopeOrgID,
 		URL:         ep.URL,
 		Description: ep.Description,
 		Secret:      ep.Secret,
@@ -143,6 +147,8 @@ func fromEndpointModel(m *endpointModel) (*endpoint.Endpoint, error) {
 		},
 		ID:          epID,
 		TenantID:    m.TenantID,
+		ScopeAppID:  m.ScopeAppID,
+		ScopeOrgID:  m.ScopeOrgID,
 		URL:         m.URL,
 		Description: m.Description,
 		Secret:      m.Secret,

@@ -59,7 +59,7 @@ func (c *Catalog) RegisterType(ctx context.Context, def WebhookDefinition, opts 
 	}
 
 	c.mu.Lock()
-	c.cache[def.Name] = et
+	c.cachePutLocked(def.Name, et)
 	c.mu.Unlock()
 
 	return et, nil
@@ -98,7 +98,7 @@ func (c *Catalog) GetType(ctx context.Context, name string) (*EventType, error) 
 	}
 
 	c.mu.Lock()
-	c.cache[name] = et
+	c.cachePutLocked(name, et)
 	c.mu.Unlock()
 
 	return et, nil
@@ -164,4 +164,13 @@ func (c *Catalog) warmCache(ctx context.Context) error {
 // WarmCache preloads the cache from the store.
 func (c *Catalog) WarmCache(ctx context.Context) error {
 	return c.warmCache(ctx)
+}
+
+// cachePutLocked starts a fresh TTL window without extending stale entries.
+func (c *Catalog) cachePutLocked(name string, et *EventType) {
+	if c.cacheExpired() {
+		c.cache = make(map[string]*EventType)
+		c.lastLoad = time.Now()
+	}
+	c.cache[name] = et
 }
