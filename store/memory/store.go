@@ -514,12 +514,17 @@ func (s *Store) ListByEvent(_ context.Context, evtID id.ID) ([]*delivery.Deliver
 }
 
 // CountPending returns the number of deliveries awaiting attempt.
-func (s *Store) CountPending(_ context.Context) (int64, error) {
-	s.mu.RLock()
+func (s *Store) CountPending(ctx context.Context) (int64, error) {
+	if err := s.lockPendingCount(ctx); err != nil {
+		return 0, err
+	}
 	defer s.mu.RUnlock()
 
 	var count int64
 	for _, d := range s.deliveries {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		if d.State == delivery.StatePending {
 			count++
 		}
