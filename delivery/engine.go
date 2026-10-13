@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -45,6 +46,8 @@ type EngineConfig struct {
 	RetrySchedule   []time.Duration
 	Metrics         *observability.Metrics
 	Tracer          *observability.Tracer
+	// HTTPClient sends deliveries. Nil means a plain client with RequestTimeout.
+	HTTPClient *http.Client
 }
 
 // Engine is the delivery worker pool that dequeues and processes deliveries.
@@ -73,9 +76,13 @@ func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Lo
 	if cfg.MaxPollInterval < cfg.PollInterval {
 		cfg.MaxPollInterval = cfg.PollInterval
 	}
+	sender := NewSender(cfg.RequestTimeout)
+	if cfg.HTTPClient != nil {
+		sender = NewSenderWithClient(cfg.HTTPClient, cfg.RequestTimeout)
+	}
 	return &Engine{
 		store:   store,
-		sender:  NewSender(cfg.RequestTimeout),
+		sender:  sender,
 		retrier: NewRetrier(cfg.RetrySchedule),
 		dlq:     dlq,
 		limiter: ratelimit.New(),

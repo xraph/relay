@@ -40,6 +40,18 @@ func NewSender(timeout time.Duration) *Sender {
 	}
 }
 
+// NewSenderWithClient sends deliveries through client, for example one whose
+// dialer refuses private addresses. A client with no Timeout gets timeout.
+// The client is copied, so the caller's value is never changed.
+func NewSenderWithClient(client *http.Client, timeout time.Duration) *Sender {
+	c := *client
+	if c.Timeout == 0 {
+		c.Timeout = timeout
+	}
+
+	return &Sender{client: &c}
+}
+
 // Send delivers an event to an endpoint and returns the result.
 func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Event, d *Delivery) Result {
 	body, err := json.Marshal(evt.Data)

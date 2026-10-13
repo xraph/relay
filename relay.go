@@ -42,6 +42,7 @@ func (r *Relay) wireServices() {
 		RetrySchedule:   r.config.RetrySchedule,
 		Metrics:         r.metrics,
 		Tracer:          r.tracer,
+		HTTPClient:      r.config.HTTPClient,
 	}, r.logger)
 }
 

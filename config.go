@@ -1,6 +1,9 @@
 package relay
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 // Config holds the configuration for a Relay instance.
 type Config struct {
@@ -20,6 +23,9 @@ type Config struct {
 
 	// RequestTimeout is the HTTP timeout per delivery attempt.
 	RequestTimeout time.Duration
+
+	// HTTPClient sends deliveries. Nil means a plain client with RequestTimeout.
+	HTTPClient *http.Client `json:"-" yaml:"-"`
 
 	// MaxRetries is the global default for maximum delivery attempts.
 	MaxRetries int

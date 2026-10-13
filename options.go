@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"errors"
+	"net/http"
 	"time"
 
 	log "github.com/xraph/go-utils/log"
@@ -97,6 +99,21 @@ func WithMaxPollInterval(d time.Duration) Option {
 func WithBatchSize(n int) Option {
 	return func(r *Relay) error {
 		r.config.BatchSize = n
+		return nil
+	}
+}
+
+// WithHTTPClient sets the client deliveries are sent with, for example one
+// whose dialer refuses private networks. A client with no Timeout uses the
+// configured request timeout.
+func WithHTTPClient(c *http.Client) Option {
+	return func(r *Relay) error {
+		if c == nil {
+			return errors.New("relay: HTTP client is required")
+		}
+
+		r.config.HTTPClient = c
+
 		return nil
 	}
 }
