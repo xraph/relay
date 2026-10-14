@@ -33,8 +33,8 @@ type Store interface {
     GetType(ctx context.Context, name string) (*EventType, error)
     GetTypeByID(ctx context.Context, etID id.ID) (*EventType, error)
     ListTypes(ctx context.Context, opts ListOpts) ([]*EventType, error)
-    MatchTypes(ctx context.Context, eventType string) ([]*EventType, error)
     DeleteType(ctx context.Context, name string) error
+    MatchTypes(ctx context.Context, pattern string) ([]*EventType, error)
 }
 ```
 
@@ -47,8 +47,20 @@ type Store interface {
     UpdateEndpoint(ctx context.Context, ep *Endpoint) error
     DeleteEndpoint(ctx context.Context, epID id.ID) error
     ListEndpoints(ctx context.Context, tenantID string, opts ListOpts) ([]*Endpoint, error)
-    SetEnabled(ctx context.Context, epID id.ID, enabled bool) error
     Resolve(ctx context.Context, tenantID string, eventType string) ([]*Endpoint, error)
+    SetEnabled(ctx context.Context, epID id.ID, enabled bool) error
+}
+```
+
+### event.Store
+
+```go
+type Store interface {
+    CreateEvent(ctx context.Context, evt *Event) error
+    GetEvent(ctx context.Context, evtID id.ID) (*Event, error)
+    ListEvents(ctx context.Context, opts ListOpts) ([]*Event, error)
+    ListEventsByTenant(ctx context.Context, tenantID string, opts ListOpts) ([]*Event, error)
+    ListEventsPage(ctx context.Context, q Query) (*Page, error)
 }
 ```
 
@@ -56,14 +68,39 @@ type Store interface {
 
 ```go
 type Store interface {
-    EnqueueBatch(ctx context.Context, deliveries []*Delivery) error
+    Enqueue(ctx context.Context, d *Delivery) error
+    EnqueueBatch(ctx context.Context, ds []*Delivery) error
     Dequeue(ctx context.Context, limit int) ([]*Delivery, error)
-    GetDelivery(ctx context.Context, delID id.ID) (*Delivery, error)
     UpdateDelivery(ctx context.Context, d *Delivery) error
+    GetDelivery(ctx context.Context, delID id.ID) (*Delivery, error)
     ListByEndpoint(ctx context.Context, epID id.ID, opts ListOpts) ([]*Delivery, error)
-    ListByEvent(ctx context.Context, evtID id.ID, opts ListOpts) ([]*Delivery, error)
+    ListByEvent(ctx context.Context, evtID id.ID) ([]*Delivery, error)
+    CountPending(ctx context.Context) (int64, error)
+    ListDeliveries(ctx context.Context, q Query) (*Page, error)
+    RecordAttempt(ctx context.Context, a *Attempt) error
+    ListAttempts(ctx context.Context, delID id.ID) ([]*Attempt, error)
+    PurgeAttempts(ctx context.Context, before time.Time) (int64, error)
 }
 ```
+
+### dlq.Store
+
+```go
+type Store interface {
+    Push(ctx context.Context, entry *Entry) error
+    ListDLQ(ctx context.Context, opts ListOpts) ([]*Entry, error)
+    GetDLQ(ctx context.Context, dlqID id.ID) (*Entry, error)
+    MarkReplayed(ctx context.Context, dlqID id.ID, at time.Time) error
+    ReleaseReplay(ctx context.Context, dlqID id.ID) error
+    Purge(ctx context.Context, before time.Time) (int64, error)
+    CountDLQ(ctx context.Context) (int64, error)
+    ListDLQPage(ctx context.Context, q Query) (*Page, error)
+}
+```
+
+`MarkReplayed` has to be an atomic claim: exactly one of several concurrent callers may succeed, and the rest get `relay.ErrAlreadyReplayed`. `ReleaseReplay` undoes the claim when the send fails. The [DLQ page](/docs/subsystems/dlq) explains why.
+
+Optional interfaces in the `store` package add capabilities when you implement them: `AtomicSender` commits an event and its fan-out together, and `WakeNotifier` lets the store wake the engine when new work arrives.
 
 ## Implementation tips
 
@@ -71,4 +108,4 @@ type Store interface {
 2. The `Resolve()` method must filter by tenant ID, enabled status, and match event type patterns against endpoint subscriptions.
 3. `Dequeue()` should atomically claim pending deliveries whose `NextAttemptAt` is in the past.
 4. `Migrate()` should be idempotent (safe to call multiple times).
-5. Run the existing test suite against your implementation to verify correctness.
+5. Run the conformance suites in `store/storetest` against your implementation (`RunEndpointSuite`, `RunDeliverySuite`, `RunReplaySuite`, `RunEngineSuite`, `RunEventPageSuite`, `RunDLQPageSuite`, and `RunAcceptanceSuite` if you support `SendReliable`). Every shipped store runs them.

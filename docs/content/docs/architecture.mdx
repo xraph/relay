@@ -20,29 +20,29 @@ Relay is organized as a set of focused Go packages. The root `relay` package tie
 │              store.Store                     │
 │  (catalog + endpoint + event + delivery +   │
 │   dlq interfaces composed)                  │
-├──────────┬──────────┬───────────────────────┤
-│ Postgres │  Grove   │       Memory          │
-│ (pgx/v5) │  (ORM)   │   (testing only)      │
-└──────────┴──────────┴───────────────────────┘
+├─────────────────────────────┬───────────────┤
+│ Postgres, SQLite, MongoDB,  │    Memory     │
+│ Redis (all through Grove)   │ (tests, dev)  │
+└─────────────────────────────┴───────────────┘
 ```
 
 ## The `Send()` critical path
 
 When you call `r.Send(ctx, event)`, Relay executes these steps in order:
 
-1. **Catalog lookup** -- Look up the event type from the catalog. Unknown types are rejected with `ErrEventTypeNotFound`.
-2. **Deprecation check** -- Reject deprecated event types with `ErrEventTypeDeprecated`.
-3. **Schema validation** -- If the event type has a JSON Schema, validate the payload against it.
-4. **Persist event** -- Store the event. Duplicate idempotency keys are silently accepted.
-5. **Resolve endpoints** -- Find all enabled endpoints for this tenant whose subscription patterns match the event type.
-6. **Fan out** -- Create one `Delivery` record per matched endpoint in `pending` state.
+1. Catalog lookup: Look up the event type from the catalog. Unknown types are rejected with `ErrEventTypeNotFound`.
+2. Deprecation check: Reject deprecated event types with `ErrEventTypeDeprecated`.
+3. Schema validation: If the event type has a JSON Schema, validate the payload against it.
+4. Persist event: Store the event. Duplicate idempotency keys are silently accepted.
+5. Resolve endpoints: Find all enabled endpoints for this tenant whose subscription patterns match the event type.
+6. Fan out: Create one `Delivery` record per matched endpoint in `pending` state.
 
 ## Delivery engine
 
 The delivery engine is a poll-based worker pool:
 
-1. A ticker fires every `PollInterval` (default: 1s).
-2. Each tick dequeues up to `BatchSize` (default: 50) pending deliveries.
+1. The engine polls every `PollInterval` (default: 1s), backing off up to `MaxPollInterval` (default: 30s) while there's no work. `Send` wakes it at once.
+2. Each poll dequeues up to `BatchSize` (default: 50) pending deliveries.
 3. Deliveries are dispatched to `Concurrency` (default: 10) goroutine workers.
 4. Each worker: fetches the endpoint and event, performs the HTTP POST, evaluates the result, and updates the delivery record.
 
@@ -50,12 +50,12 @@ The delivery engine is a poll-based worker pool:
 
 | HTTP Response | Decision |
 |--------------|----------|
-| 2xx | **Delivered** -- mark complete |
-| 410 Gone | **Disable endpoint** -- disable endpoint, push to DLQ |
-| 400--499 (except 410, 429) | **DLQ** -- client error won't self-correct |
-| 429 Too Many Requests | **Retry** -- if attempts remain, else DLQ |
-| 500--599 | **Retry** -- if attempts remain, else DLQ |
-| 0 (network/timeout) | **Retry** -- if attempts remain, else DLQ |
+| 2xx | Delivered: mark complete |
+| 410 Gone | Disable the endpoint and push to the DLQ |
+| 400 to 499 (except 410 and 429) | DLQ: a client error won't fix itself |
+| 429 Too Many Requests | Retry if attempts remain, else DLQ |
+| 500 to 599 | Retry if attempts remain, else DLQ |
+| 0 (network error or timeout) | Retry if attempts remain, else DLQ |
 
 ## Store composition
 
@@ -75,26 +75,29 @@ type Store interface {
 }
 ```
 
-Each subsystem defines its own store interface. A backend only needs to implement the aggregate to satisfy the contract. The memory, PostgreSQL, and Grove backends all implement this interface.
+Each subsystem defines its own store interface. A backend only needs to implement the aggregate to satisfy the contract. The memory, PostgreSQL, SQLite, MongoDB and Redis backends all implement it, and all of them pass the suites in `store/storetest`.
 
 ## Package index
 
 | Package | Description |
 |---------|-------------|
-| `relay` | Root -- `Relay` engine, `Send()`, `Start()`/`Stop()`, functional options |
+| `relay` | Root: `Relay` engine, `Send()`, `Start()`/`Stop()`, functional options |
 | `catalog` | Event type registry with in-memory cache and JSON Schema validation |
 | `endpoint` | Webhook endpoint CRUD service with secret rotation |
 | `event` | Event entity and store interface |
 | `delivery` | Delivery engine, HTTP sender, retry logic with exponential backoff |
 | `dlq` | Dead letter queue with replay and bulk operations |
-| `id` | TypeID-based identity -- single `ID` struct with prefix constants |
+| `id` | TypeID-based identity: a single `ID` struct with prefix constants |
 | `signature` | HMAC-SHA256 signing and verification |
 | `ratelimit` | Token bucket rate limiter per endpoint |
-| `observability` | Prometheus metrics and OpenTelemetry tracing |
-| `api` | HTTP admin API handlers (Go 1.22+ ServeMux) |
+| `observability` | Metrics over go-utils `MetricFactory` and OpenTelemetry tracing |
+| `api` | HTTP admin API: a plain `ServeMux` handler and a Forge router version |
 | `store` | Composite `Store` interface |
 | `store/memory` | In-memory store for testing |
-| `store/postgres` | PostgreSQL backend with pgx/v5 |
-| `store/grovestore` | Grove ORM backend |
+| `store/postgres` | PostgreSQL backend through Grove's `pgdriver` |
+| `store/sqlite` | SQLite backend through Grove's `sqlitedriver` |
+| `store/mongo` | MongoDB backend through Grove's `mongodriver` |
+| `store/redis` | Redis backend through Grove KV |
+| `store/storetest` | Conformance suites every store runs |
 | `extension` | Forge framework integration |
-| `scope` | Multi-tenant context helpers |
+| `scope` | App and organization scope helpers (stubs today: they capture nothing) |

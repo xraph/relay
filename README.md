@@ -215,30 +215,36 @@ The `extension` package mounts Relay in a Forge app:
 ```go
 import (
 	"github.com/xraph/forge"
-	"github.com/xraph/relay"
 	relayext "github.com/xraph/relay/extension"
 	"github.com/xraph/relay/store/memory"
 )
+
+cfg := relayext.DefaultConfig()
+cfg.MaxRetries = 8
 
 app := forge.NewApp(forge.AppConfig{
 	Name: "orders",
 	Extensions: []forge.Extension{
 		relayext.New(
+			relayext.WithConfig(cfg),
 			relayext.WithStore(memory.New()),
-			relayext.WithRelayOption(relay.WithMaxRetries(8)),
 		),
 	},
 })
 ```
 
+Tune the engine through `WithConfig`, as above, and start from `DefaultConfig()`. `WithRelayOption(relay.WithMaxRetries(8))` looks like it should work, but it doesn't: the extension fills the embedded `relay.Config` with defaults and appends those options after yours, so the engine ends up with 5 retries. The same goes for concurrency, the poll intervals, batch size, request timeout, the retry schedule, the shutdown timeout and the cache TTL. Keep `WithRelayOption` for options `Config` doesn't carry, like `relay.WithHTTPClient` and `relay.WithLogger`. `WithConfig` replaces the whole config, so put it before `WithBasePath`, `WithGroveDatabase` and the other options that write into it.
+
 During `Register` the extension picks a store, builds the engine with Forge's metrics and an OpenTelemetry tracer, runs the store's migrations, mounts the admin API, and provides `*relay.Relay` to the container. Resolve it with `forge.Inject[*relay.Relay](app.Container())`. The app's `Start` and `Stop` start and stop the delivery engine, and the health check pings the store.
 
 The store comes from the first of these that applies:
 
-1. `relayext.WithStore(s)`.
-2. A named `*grove.DB` from the container, with `WithGroveDatabase(name)` or `grove_database`. The driver picks the PostgreSQL, SQLite or Mongo store.
-3. A named `*kv.Store` from the container for the Redis store, with `WithGroveKV(name)` or `grove_kv`.
-4. The default `*grove.DB` in the container.
+1. A `*grove.DB` from the container, with `WithGroveDatabase(name)` or `grove_database` (`""` means the default one). The driver picks the PostgreSQL, SQLite or Mongo store.
+2. A `*kv.Store` from the container for the Redis store, with `WithGroveKV(name)` or `grove_kv`.
+3. The default `*grove.DB` in the container, which the extension finds on its own when the Grove extension registered one.
+4. `relayext.WithStore(s)`.
+
+A store found through grove is passed to `relay.New` after the one from `WithStore`, so it wins, even when you never asked for grove. If you want your `WithStore` store in an app that also runs the Grove extension, don't register a default grove database.
 
 There is no in-memory fallback. If you give it none of these, `Register` fails with `ErrNoStore`.
 
@@ -260,7 +266,7 @@ extensions:
     grove_kv: ""         # named kv.Store, for the Redis store
 ```
 
-The matching options are `WithBasePath`, `WithDisableRoutes`, `WithDisableMigrate`, `WithGroveDatabase`, `WithGroveKV`, `WithConfig` and `WithRequireConfig`. Set the engine's own tuning (concurrency, retries, timeouts) in code, with `WithRelayOption(relay.With...)` or the embedded `relay.Config` in `WithConfig`. Those fields carry no YAML tags today, so they don't bind from a config file.
+The matching options are `WithBasePath`, `WithDisableRoutes`, `WithDisableMigrate`, `WithGroveDatabase`, `WithGroveKV`, `WithConfig` and `WithRequireConfig`. Set the engine's own tuning (concurrency, retries, timeouts) in code, through the embedded `relay.Config` in `WithConfig`. Those fields carry no YAML tags today, so `max_retries`, `concurrency` and the rest are ignored in a config file, and `WithRelayOption` can't set them either (see above).
 
 ## Documentation
 

@@ -3,7 +3,7 @@ title: Grove Integration
 description: How Relay stores use Grove ORM and Grove KV for database access.
 ---
 
-All Relay persistence backends are built on [Grove](https://github.com/xraph/grove) -- the ORM and KV abstraction layer used across the Forge ecosystem. This means every store follows the same patterns for connection management, migrations, and DI integration.
+Every Relay store except the in-memory one is built on [Grove](https://github.com/xraph/grove), the ORM and KV layer used across the Forge ecosystem. There is no separate "grove store" package: this page covers what the PostgreSQL, SQLite, MongoDB and Redis stores share.
 
 ## Architecture
 
@@ -11,8 +11,8 @@ Relay's stores fall into two categories based on the Grove layer they use:
 
 | Layer | Stores | Description |
 |-------|--------|-------------|
-| **Grove ORM** (`grove.DB`) | [PostgreSQL](/docs/stores/postgres), [SQLite](/docs/stores/sqlite), [MongoDB](/docs/stores/mongo) | Struct-based models with query builders and the Grove migrator |
-| **Grove KV** (`kv.Store`) | [Redis](/docs/stores/redis) | Key-value storage with JSON-serialized entities and sorted set indexes |
+| Grove ORM (`grove.DB`) | [PostgreSQL](/docs/stores/postgres), [SQLite](/docs/stores/sqlite), [MongoDB](/docs/stores/mongo) | Struct-based models with query builders and the Grove migrator |
+| Grove KV (`kv.Store`) | [Redis](/docs/stores/redis) | Key-value storage with JSON-serialized entities and sorted set indexes |
 
 ## Constructor pattern
 
@@ -33,13 +33,13 @@ redisStore := redisstore.New(kvStore)
 When using the Forge extension, you don't need to import individual store packages. The extension resolves a `grove.DB` or `kv.Store` from the DI container and auto-constructs the correct store based on the driver type:
 
 ```go
-// Detects pg/sqlite/mongo driver and builds the right store
-app.Use(extension.New(
+// Detects the pg/sqlite/mongo driver and builds the right store
+app.RegisterExtension(extension.New(
     extension.WithGroveDatabase(""),
 ))
 
-// Or for Redis via KV
-app.Use(extension.New(
+// Or the Redis store, through a grove KV store
+app.RegisterExtension(extension.New(
     extension.WithGroveKV(""),
 ))
 ```
@@ -73,12 +73,14 @@ extensions:
 
 ## Store resolution order
 
-The extension resolves its store in this order:
+The extension picks its store from the first of these that applies:
 
-1. **Explicit store** -- if `relay.WithStore(s)` was passed as an option, it is used directly.
-2. **Grove database** -- if `WithGroveDatabase` was called (or `grove_database` is set in YAML), the named or default `grove.DB` is resolved from DI and the driver type determines the store.
-3. **Grove KV** -- if `WithGroveKV` was called (or `grove_kv` is set in YAML), the named or default `kv.Store` is resolved from DI.
-4. **Fallback** -- if none of the above is configured, no store is set and `relay.New()` returns `ErrNoStore` unless a store was provided via other means.
+1. `WithGroveDatabase(name)`, or a non-empty `grove_database` in YAML. The driver type picks the store.
+2. `WithGroveKV(name)`, or a non-empty `grove_kv` in YAML. This builds the Redis store.
+3. A default `grove.DB` in the container, if one is registered.
+4. The store passed with `extension.WithStore(s)`.
+
+A grove store wins over `WithStore` because it's passed to `relay.New` after it. If none of these applies, `relay.New()` returns `ErrNoStore`. The [Forge extension guide](/docs/guides/forge-extension#store-resolution) has the details.
 
 ## Migrations
 
@@ -93,4 +95,4 @@ The Grove migrator supports:
 - Up/down migration functions
 - Orchestrated execution with locking
 
-The Redis store does not require migrations (keys are created on demand).
+The Redis store has no migration group, but you still call `Migrate` on it. It checks that the KV store maps keys in a way Relay can follow (`ErrKVKeysInconsistent` if not) and builds the every-tenant endpoint and delivery indexes. The extension does this for you unless you set `disable_migrate`.

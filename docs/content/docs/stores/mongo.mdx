@@ -12,11 +12,16 @@ The MongoDB store uses [Grove ORM](https://github.com/xraph/grove) with the `mon
 ```go
 import (
     "github.com/xraph/grove"
-    _ "github.com/xraph/grove/drivers/mongodriver"
+    "github.com/xraph/grove/drivers/mongodriver"
     mongostore "github.com/xraph/relay/store/mongo"
 )
 
-db, err := grove.Open("mongo", "mongodb://localhost:27017/relay")
+drv := mongodriver.New()
+if err := drv.Open(ctx, "mongodb://localhost:27017/relay"); err != nil {
+    log.Fatal(err)
+}
+
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -35,7 +40,7 @@ r, err := relay.New(relay.WithStore(s))
 When using the Forge extension with Grove, the store is auto-constructed from the DI container based on the driver type:
 
 ```go
-app.Use(extension.New(
+app.RegisterExtension(extension.New(
     extension.WithGroveDatabase(""),  // uses the default grove.DB
 ))
 ```

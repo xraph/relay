@@ -13,7 +13,9 @@ The limiter uses a token bucket algorithm:
 - Bucket starts full at the rate limit value.
 - Each delivery consumes one token.
 - Tokens refill continuously at the configured rate.
-- When empty, deliveries are delayed until tokens become available.
+- When it's empty, the engine puts the delivery back in the queue for when a token is due. No attempt is counted, since nothing was sent.
+
+The buckets live in each process's memory. If you run several Relay processes against one store, each gets the full rate, so the endpoint can see up to that many times the limit.
 
 ## Usage
 

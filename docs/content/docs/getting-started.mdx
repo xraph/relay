@@ -5,7 +5,7 @@ description: Install Relay and send your first webhook in under five minutes.
 
 ## Prerequisites
 
-- Go 1.22 or later
+- Go 1.26 or later
 - A Go module (`go mod init`)
 
 ## Install
@@ -88,7 +88,7 @@ err = r.Send(ctx, &event.Event{
 })
 ```
 
-`Send()` validates the event type, persists the event, resolves all matching endpoints, and enqueues one delivery per endpoint.
+`Send()` checks that the event type exists and isn't deprecated, validates the payload against the type's schema if it has one, persists the event, and enqueues one delivery for every enabled endpoint of that tenant whose patterns match. It doesn't wait for the HTTP call.
 
 ## Step 5: Start the delivery engine
 
@@ -97,7 +97,7 @@ r.Start(ctx)
 defer r.Stop(ctx)
 ```
 
-The engine polls for pending deliveries, dispatches them to worker goroutines, and handles retries with exponential backoff.
+The engine polls for pending deliveries, dispatches them to worker goroutines, and handles retries with exponential backoff. `Stop` cancels the engine's context and waits for its workers to return.
 
 ## Step 6: Mount the admin API (optional)
 
@@ -107,6 +107,7 @@ import (
     "github.com/xraph/relay/api"
 )
 
+// nil logger means a no-op logger
 handler := api.NewHandler(r.Store(), r.Catalog(), r.Endpoints(), r.DLQ(), nil)
 mux := http.NewServeMux()
 mux.Handle("/webhooks/", http.StripPrefix("/webhooks", handler))
@@ -114,9 +115,11 @@ mux.Handle("/webhooks/", http.StripPrefix("/webhooks", handler))
 log.Fatal(http.ListenAndServe(":8080", mux))
 ```
 
+The admin API has no authentication of its own, so put your own auth in front of it before you expose it.
+
 ## Next steps
 
-- [Architecture](/docs/architecture) -- Understand the package structure
-- [Catalog](/docs/subsystems/catalog) -- Configure event types with JSON Schema
-- [Delivery](/docs/subsystems/delivery) -- Tune retry schedules and concurrency
-- [Stores](/docs/stores/postgres) -- Connect to PostgreSQL for production
+- [Architecture](/docs/architecture): Understand the package structure
+- [Catalog](/docs/subsystems/catalog): Configure event types with JSON Schema
+- [Delivery](/docs/subsystems/delivery): Tune retry schedules and concurrency
+- [Stores](/docs/stores/postgres): Connect to PostgreSQL for production

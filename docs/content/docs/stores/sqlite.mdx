@@ -12,11 +12,16 @@ The SQLite store uses [Grove ORM](https://github.com/xraph/grove) with the `sqli
 ```go
 import (
     "github.com/xraph/grove"
-    _ "github.com/xraph/grove/drivers/sqlitedriver"
+    "github.com/xraph/grove/drivers/sqlitedriver"
     sqlitestore "github.com/xraph/relay/store/sqlite"
 )
 
-db, err := grove.Open("sqlite", "relay.db")
+drv := sqlitedriver.New()
+if err := drv.Open(ctx, "relay.db"); err != nil {
+    log.Fatal(err)
+}
+
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -35,7 +40,7 @@ r, err := relay.New(relay.WithStore(s))
 When using the Forge extension with Grove, the store is auto-constructed from the DI container based on the driver type:
 
 ```go
-app.Use(extension.New(
+app.RegisterExtension(extension.New(
     extension.WithGroveDatabase(""),  // uses the default grove.DB
 ))
 ```
@@ -54,17 +59,18 @@ The extension detects the `sqlite` driver automatically and constructs the corre
 
 Call `s.Migrate(ctx)` before first use. Migrations are managed by the Grove migrator and create the same five tables as the PostgreSQL store, adapted for SQLite:
 
-- `relay_event_types` -- event type catalog
-- `relay_endpoints` -- webhook endpoints
-- `relay_events` -- inbound events
-- `relay_deliveries` -- delivery queue
-- `relay_dlq` -- dead letter queue
+- `relay_event_types`: the event type catalog
+- `relay_endpoints`: webhook endpoints
+- `relay_events`: inbound events
+- `relay_deliveries`: the delivery queue
+- `relay_delivery_attempts`: one row per HTTP attempt
+- `relay_dlq`: the dead letter queue
 
 SQLite-specific differences from PostgreSQL:
 - Booleans stored as `INTEGER` (0/1)
 - Timestamps stored as `TEXT` using `datetime('now')`
 - JSON fields stored as `TEXT`
-- No `FOR UPDATE SKIP LOCKED` -- SQLite serializes writes via WAL mode
+- No `FOR UPDATE SKIP LOCKED`: SQLite serializes writes. The store doesn't set a journal mode or busy timeout for you, so put `_pragma=busy_timeout(5000)` (and WAL, if you want it) in the DSN, because ten workers write at once by default.
 
 ## Internals
 
@@ -72,7 +78,7 @@ SQLite-specific differences from PostgreSQL:
 |--------|--------|
 | Driver | Grove ORM with `sqlitedriver` |
 | Migrations | Grove migrator with Go-defined migrations |
-| Dequeue | WAL-mode serialized writes (no row locking needed) |
+| Dequeue | Serialized writes (no row locking needed) |
 | Transactions | SQLite ACID transactions |
 | JSON fields | `TEXT` (serialized JSON) |
 | Timestamps | `TEXT` (ISO 8601 via `datetime('now')`) |

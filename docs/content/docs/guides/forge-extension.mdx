@@ -3,128 +3,161 @@ title: Forge Extension
 description: Mount Relay into a Forge application.
 ---
 
-Relay includes an extension adapter for the [Forge](https://github.com/xraph/forge) framework.
+The `extension` package runs Relay inside a [Forge](https://github.com/xraph/forge) app. It builds the engine, migrates the store, mounts the admin API and starts and stops the delivery engine with the app.
 
 ## Setup
 
 ```go
+package main
+
 import (
-    "github.com/xraph/relay/extension"
+    "log"
+
+    "github.com/xraph/forge"
+    relayext "github.com/xraph/relay/extension"
     "github.com/xraph/relay/store/memory"
 )
 
-ext := extension.NewExtension(
-    extension.WithPrefix("/webhooks"),
-)
+func main() {
+    app := forge.NewApp(forge.AppConfig{
+        Name: "orders",
+        Extensions: []forge.Extension{
+            relayext.New(
+                relayext.WithStore(memory.New()),
+            ),
+        },
+    })
 
-// Create the admin API handler
-handler := ext.Handler(store, catalog, endpointSvc, dlqSvc)
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
+}
 ```
+
+`app.RegisterExtension(relayext.New(...))` works too, as long as you call it before the app starts.
+
+During `Register` the extension:
+
+1. Loads its config from `extensions.relay` (or a top-level `relay` key).
+2. Picks a store (see [store resolution](#store-resolution)).
+3. Builds the engine with the app's metrics and an OpenTelemetry tracer.
+4. Runs `Migrate` on the store, unless you turned that off.
+5. Mounts the admin API under the base path, unless you turned that off.
+6. Provides `*relay.Relay` to the container.
+
+Resolve the engine anywhere else in your app:
+
+```go
+r, err := forge.Inject[*relay.Relay](app.Container())
+```
+
+The app's `Start` starts the delivery engine and `Stop` stops it. The extension's health check pings the store.
 
 ## Extension options
 
-| Option | Purpose | Default |
-|--------|---------|---------|
-| `WithPrefix(path)` | URL prefix for admin API routes | `/webhooks` |
+| Option | What it does |
+|--------|--------------|
+| `WithStore(s)` | Use this store, unless a grove store is found (see below) |
+| `WithGroveDatabase(name)` | Resolve a `*grove.DB` from the container; `""` means the default one |
+| `WithGroveKV(name)` | Resolve a `*kv.Store` from the container for the Redis store; `""` means the default one |
+| `WithBasePath(path)` | URL prefix for the admin API. Default `/relay` |
+| `WithDisableRoutes()` | Don't mount the admin API |
+| `WithDisableMigrate()` | Don't run the store's migrations during `Register` |
+| `WithConfig(cfg)` | Replace the whole extension `Config` |
+| `WithRequireConfig(true)` | Fail `Register` when the config file has no `extensions.relay` or `relay` key |
+| `WithRelayOption(opt)` | Append a raw `relay.Option`, such as `relay.WithHTTPClient(c)` |
 
-## How it works
+`WithPrefix` and `WithDisableMigrations` still exist as deprecated aliases of `WithBasePath` and `WithDisableMigrate`.
 
-The extension provides:
-- A configurable URL prefix for all admin API routes.
-- A `Handler()` method that creates the admin API handler from your services.
-- Integration point for Forge's dependency injection and lifecycle.
+### Engine tuning
 
-## Grove database integration
-
-When your Forge app uses the [Grove extension](https://github.com/xraph/grove) to manage database connections, Relay can automatically resolve a `grove.DB` from the DI container and construct the correct store backend based on the driver type.
-
-### Using the default grove database
-
-If the Grove extension registers a single database (or a default in multi-DB mode), use `WithGroveDatabase` with an empty name:
+`WithRelayOption` doesn't work for the tuning options that also live in `Config` (concurrency, poll intervals, batch size, request timeout, retries, retry schedule, cache TTL). The extension fills those fields with defaults and appends them after your options, so `WithRelayOption(relay.WithMaxRetries(8))` ends up as 5. Set them through `WithConfig`, starting from the defaults:
 
 ```go
-ext := extension.NewExtension(
-    extension.WithGroveDatabase(""),
+cfg := relayext.DefaultConfig()
+cfg.MaxRetries = 8
+cfg.Concurrency = 20
+
+ext := relayext.New(
+    relayext.WithConfig(cfg),
+    relayext.WithStore(memory.New()),
 )
 ```
 
-### Using a named grove database
+`WithConfig` replaces the whole config, so put it before `WithBasePath`, `WithGroveDatabase` and the other options that write into it. `WithRelayOption` is still the way to pass `relay.WithHTTPClient` or `relay.WithLogger`.
 
-In multi-database setups, reference a specific database by name:
+## Store resolution
 
-```go
-ext := extension.NewExtension(
-    extension.WithGroveDatabase("webhooks"),
-)
-```
+The extension builds its store from the first of these that applies, then hands it to `relay.New`:
 
-This resolves the grove.DB named `"webhooks"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+1. `WithGroveDatabase(name)`, or a non-empty `grove_database` in the config file. The grove driver picks the PostgreSQL, SQLite or MongoDB store.
+2. `WithGroveKV(name)`, or a non-empty `grove_kv`. This builds the Redis store.
+3. A default `*grove.DB` in the container, if the Grove extension registered one.
+4. The store from `WithStore`.
 
-### Using the default grove KV store
+A store found through grove is passed after the one from `WithStore`, so it wins. If you want `WithStore` to be used in an app that also runs the Grove extension, don't register a default grove database.
 
-If the Grove extension registers a KV store, use `WithGroveKV` with an empty name:
+There is no in-memory fallback. If none of these applies, `Register` fails with `ErrNoStore`.
 
-```go
-ext := extension.NewExtension(
-    extension.WithGroveKV(""),
-)
-```
-
-### Using a named grove KV store
-
-In multi-KV setups, reference a specific KV store by name:
+### Grove databases
 
 ```go
-ext := extension.NewExtension(
-    extension.WithGroveKV("relay-kv"),
-)
+// The default grove.DB
+relayext.New(relayext.WithGroveDatabase(""))
+
+// A named one
+relayext.New(relayext.WithGroveDatabase("webhooks"))
+
+// A grove KV store, for the Redis store
+relayext.New(relayext.WithGroveKV("relay-kv"))
 ```
 
-### Store resolution order
-
-The extension resolves its store in this order:
-
-1. **Explicit store** -- if `WithStore(s)` was called, it is used directly and grove is ignored.
-2. **Grove database** -- if `WithGroveDatabase(name)` was called (or `grove_database` is set in YAML), the named or default `grove.DB` is resolved from DI.
-3. **Grove KV** -- if `WithGroveKV(name)` was called (or `grove_kv` is set in YAML), the named or default grove KV store is resolved from DI.
-4. **In-memory fallback** -- if none of the above is configured, an in-memory store is used.
+The driver decides which store you get, so you don't import the store packages yourself.
 
 ## YAML configuration
 
-The Relay extension automatically loads configuration from your Forge app's YAML config files. It looks for the key `extensions.relay` first, then falls back to `relay`:
+The extension reads `extensions.relay` first, then a top-level `relay` key:
 
 ```yaml
-# forge.yaml (or app.yaml, config.yaml, etc.)
 extensions:
   relay:
-    prefix: /webhooks
+    base_path: /relay
+    disable_routes: false
+    disable_migrate: false
     grove_database: webhooks
-    grove_kv: relay-kv
+    grove_kv: ""
 ```
-
-Or at the top level:
-
-```yaml
-relay:
-  prefix: /webhooks
-  grove_database: ""
-  grove_kv: ""
-```
-
-### Configuration reference
 
 | Field | YAML key | Type | Default | Description |
 |-------|----------|------|---------|-------------|
-| `Prefix` | `prefix` | `string` | `"/webhooks"` | URL prefix for all admin API routes |
-| `GroveDatabase` | `grove_database` | `string` | `""` | Name of the grove.DB to resolve from DI; empty uses the default DB |
-| `GroveKV` | `grove_kv` | `string` | `""` | Name of the grove KV store to resolve from DI; empty uses the default KV |
+| `BasePath` | `base_path` | `string` | `"/relay"` | URL prefix for the admin API |
+| `DisableRoutes` | `disable_routes` | `bool` | `false` | Skip mounting the admin API |
+| `DisableMigrate` | `disable_migrate` | `bool` | `false` | Skip `Migrate` during `Register` |
+| `GroveDatabase` | `grove_database` | `string` | `""` | Name of the `grove.DB` to resolve from the container |
+| `GroveKV` | `grove_kv` | `string` | `""` | Name of the grove `kv.Store` to resolve from the container |
+
+The extension `Config` also embeds `relay.Config`, but those fields carry no YAML tags, so `concurrency`, `max_retries` and the other engine settings in a config file are ignored. Set them in code with `WithConfig`.
+
+When a config file key is found, its string values win over the options you set in code, and `disable_routes` or `disable_migrate` set in code still turn the feature off.
+
+## Admin API routes
+
+The routes are mounted under the base path plus `/v1`, so with the defaults you get `/relay/v1/event-types`, `/relay/v1/endpoints`, `/relay/v1/events`, `/relay/v1/dlq`, `/relay/v1/stats` and the rest. They carry OpenAPI metadata. The [admin API](/docs/subsystems/admin-api) page lists them all.
+
+The admin API has no authentication of its own. Put your own auth middleware in front of it, or turn the routes off with `WithDisableRoutes()` and mount `ext.API().RegisterRoutes(group)` on a router group you protect.
+
+## Dashboard
+
+The extension registers a contract contributor for the Forge dashboard, covering endpoints, events, deliveries, event types and the DLQ.
 
 ## Standalone usage
 
-The extension's `Handler()` method works without Forge:
+Outside Forge, use `api.NewHandler` for a plain `http.Handler` on Go's `ServeMux`. Its routes have no `/v1` prefix:
 
 ```go
-ext := extension.NewExtension()
-h := ext.Handler(store, catalog, epSvc, dlqSvc)
-http.Handle(ext.Prefix()+"/", http.StripPrefix(ext.Prefix(), h))
+h := api.NewHandler(r.Store(), r.Catalog(), r.Endpoints(), r.DLQ(), nil)
+mux := http.NewServeMux()
+mux.Handle("/webhooks/", http.StripPrefix("/webhooks", h))
 ```
+
+`ext.Handler(store, catalog, endpointSvc, dlqSvc)` returns the same handler.

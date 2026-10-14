@@ -12,14 +12,13 @@ The `Relay` struct is configured with functional options passed to `relay.New()`
 ```go
 r, err := relay.New(
     relay.WithStore(postgresStore),
-    relay.WithLogger(slog.Default()),
+    relay.WithLogger(log.NewProductionLogger()), // github.com/xraph/go-utils/log
     relay.WithConcurrency(20),
     relay.WithPollInterval(2 * time.Second),
     relay.WithBatchSize(100),
     relay.WithRequestTimeout(15 * time.Second),
     relay.WithMaxRetries(8),
     relay.WithRetrySchedule(customSchedule),
-    relay.WithShutdownTimeout(60 * time.Second),
     relay.WithCacheTTL(time.Minute),
 )
 ```
@@ -28,16 +27,19 @@ r, err := relay.New(
 
 | Option | Purpose | Default |
 |--------|---------|---------|
-| `WithStore(s)` | Set the persistence backend (required) | -- |
-| `WithLogger(l)` | Set the structured logger | `slog.Default()` |
+| `WithStore(s)` | Set the persistence backend (required) | none |
+| `WithLogger(l)` | Set the logger, a `github.com/xraph/go-utils/log` `Logger` (not a `*slog.Logger`) | a no-op logger, so you see nothing until you set one |
 | `WithConcurrency(n)` | Number of delivery worker goroutines | `10` |
 | `WithPollInterval(d)` | How often the engine checks for pending deliveries | `1s` |
+| `WithMaxPollInterval(d)` | Cap on the idle backoff, which doubles from the poll interval while polls come back empty | `30s` |
 | `WithBatchSize(n)` | Max deliveries dequeued per poll cycle | `50` |
 | `WithRequestTimeout(d)` | HTTP timeout per delivery attempt | `30s` |
+| `WithHTTPClient(c)` | The client deliveries go out on, for example one whose dialer refuses private addresses | a plain client with the request timeout |
 | `WithMaxRetries(n)` | Maximum delivery attempts before DLQ | `5` |
 | `WithRetrySchedule(s)` | Backoff intervals between retries | `[5s, 30s, 2m, 15m, 2h]` |
-| `WithShutdownTimeout(d)` | Max wait for in-flight deliveries on shutdown | `30s` |
+| `WithShutdownTimeout(d)` | Stored in `Config`, but nothing reads it yet. `Stop` cancels the engine and waits for its workers however long that takes | `30s` |
 | `WithCacheTTL(d)` | TTL for the catalog's in-memory cache (0 = no cache) | `30s` |
+| `WithMetrics(m)`, `WithTracer(t)` | Delivery metrics and OpenTelemetry spans, see [Observability](/docs/subsystems/observability) | none |
 
 ## Config struct
 
@@ -45,14 +47,18 @@ r, err := relay.New(
 type Config struct {
     Concurrency     int
     PollInterval    time.Duration
+    MaxPollInterval time.Duration
     BatchSize       int
     RequestTimeout  time.Duration
+    HTTPClient      *http.Client
     MaxRetries      int
     RetrySchedule   []time.Duration
-    ShutdownTimeout time.Duration
+    ShutdownTimeout time.Duration // not read yet
     CacheTTL        time.Duration
 }
 ```
+
+`relay.DefaultConfig()` returns the defaults in the table above. These fields carry no YAML tags, so when the [Forge extension](/docs/guides/forge-extension) embeds this struct in its own config, you can't set them from a config file. Set them in code.
 
 ## Default retry schedule
 

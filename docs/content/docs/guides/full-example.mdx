@@ -14,11 +14,11 @@ import (
     "context"
     "encoding/json"
     "log"
-    "log/slog"
     "net/http"
     "os"
     "os/signal"
 
+    glog "github.com/xraph/go-utils/log"
     "github.com/xraph/relay"
     "github.com/xraph/relay/api"
     "github.com/xraph/relay/catalog"
@@ -31,7 +31,7 @@ func main() {
     ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
     defer stop()
 
-    logger := slog.Default()
+    logger := glog.NewDevelopmentLogger()
 
     // Create relay with in-memory store.
     r, err := relay.New(
@@ -55,12 +55,15 @@ func main() {
     })
 
     // Create a webhook endpoint.
-    ep, _ := r.Endpoints().Create(ctx, endpoint.Input{
+    ep, err := r.Endpoints().Create(ctx, endpoint.Input{
         TenantID:   "tenant-acme",
         URL:        "https://acme.example.com/webhook",
         EventTypes: []string{"order.*"},
     })
-    logger.Info("endpoint created", "id", ep.ID, "secret", ep.Secret)
+    if err != nil {
+        log.Fatal(err)
+    }
+    logger.Info("endpoint created", glog.String("id", ep.ID.String()))
 
     // Start the delivery engine.
     r.Start(ctx)
@@ -89,6 +92,8 @@ func main() {
     }
 }
 ```
+
+The handler from `api.NewHandler` has no `/v1` prefix and no authentication. Put your own auth in front of it before you expose it.
 
 ## Testing it
 

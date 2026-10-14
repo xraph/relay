@@ -3,7 +3,9 @@ title: Admin API
 description: HTTP admin API for managing webhooks.
 ---
 
-The `api` package provides a RESTful HTTP API for managing all Relay entities. It uses Go 1.22+ `http.ServeMux` pattern routing.
+The `api` package provides an HTTP API for managing all Relay entities. `api.NewHandler` gives you a plain `http.Handler` on Go's `http.ServeMux` pattern routing; `api.NewForgeAPI` registers the same operations on a Forge router with OpenAPI metadata, which is what the [Forge extension](/docs/guides/forge-extension) mounts.
+
+Neither has authentication of its own. Put your own auth in front of it before you expose it.
 
 ## Setup
 
@@ -17,6 +19,8 @@ mux.Handle("/webhooks/", http.StripPrefix("/webhooks", handler))
 ```
 
 ## Routes
+
+The paths below are the plain handler's. Under the Forge extension they sit under the base path plus `/v1`, for example `/relay/v1/event-types`.
 
 ### Event Types
 
@@ -71,8 +75,8 @@ mux.Handle("/webhooks/", http.StripPrefix("/webhooks", handler))
 ## Middleware
 
 The handler includes built-in middleware:
-- **Logging** -- Logs method, path, status, and duration for every request.
-- **Panic recovery** -- Catches panics and returns 500 with a JSON error.
+- Logging of method, path, status and duration for every request.
+- Panic recovery, which returns 500 with a JSON error.
 
 ## Error responses
 

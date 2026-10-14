@@ -12,16 +12,26 @@ The Redis store uses [Grove KV](https://github.com/xraph/grove) with the `redisd
 ```go
 import (
     "github.com/xraph/grove/kv"
-    _ "github.com/xraph/grove/kv/drivers/redisdriver"
+    "github.com/xraph/grove/kv/drivers/redisdriver"
     redisstore "github.com/xraph/relay/store/redis"
 )
 
-store, err := kv.Open("redis", "redis://localhost:6379/0")
+rdb := redisdriver.New()
+if err := rdb.Open(ctx, "redis://localhost:6379/0"); err != nil {
+    log.Fatal(err)
+}
+
+kvStore, err := kv.Open(rdb)
 if err != nil {
     log.Fatal(err)
 }
 
-s := redisstore.New(store)
+s := redisstore.New(kvStore)
+
+// Migrate checks the key mapping and builds the every-tenant indexes.
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
 
 r, err := relay.New(relay.WithStore(s))
 ```
@@ -31,7 +41,7 @@ r, err := relay.New(relay.WithStore(s))
 When using the Forge extension with Grove KV, the store is resolved from the DI container:
 
 ```go
-app.Use(extension.New(
+app.RegisterExtension(extension.New(
     extension.WithGroveKV(""),  // uses the default grove kv.Store
 ))
 ```
@@ -215,6 +225,6 @@ If you set `DisableMigrate`, this check does not run.
 
 ## Limitations
 
-- No multi-key transactions -- operations are atomic per key only.
+- Most operations are atomic per key only. The exceptions are the replay claim (WATCH/MULTI) and the dequeue (a Lua script).
 - Pagination is applied client-side after fetching sorted set members.
 - Data durability depends on Redis persistence configuration (RDB, AOF, or none).

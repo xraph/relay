@@ -5,6 +5,10 @@ description: Complete reference for the Relay admin API endpoints.
 
 The admin API is served by `api.NewHandler()`. Mount it under a prefix of your choice. All requests and responses use JSON.
 
+These paths are the plain handler's. The [Forge extension](/docs/guides/forge-extension) mounts the same operations under its base path plus `/v1` (for example `/relay/v1/endpoints`), with `:endpointId`, `:eventId` and `:dlqId` path parameters.
+
+Neither version has authentication. Put your own in front of it.
+
 ## Setup
 
 ```go
@@ -26,7 +30,7 @@ Content-Type: application/json
   "group": "billing",
   "version": "2025-01-01",
   "schema": {"type": "object"},
-  "example": {"invoice_id": "INV-001"}
+  "metadata": {"team": "billing"}
 }
 ```
 
@@ -35,8 +39,10 @@ Content-Type: application/json
 ### List event types
 
 ```http
-GET /event-types?group=billing&limit=20&offset=0
+GET /event-types?group=billing&include_deprecated=true&limit=20&offset=0
 ```
+
+`limit` defaults to 50 on every list route.
 
 **Response:** `200 OK` with array of event types.
 
@@ -52,7 +58,7 @@ GET /event-types/{name}
 DELETE /event-types/{name}
 ```
 
-Soft-deletes the event type. Sending events with this type will fail.
+Soft-deletes the event type and answers `204 No Content`. Sending events with this type will fail.
 
 ## Endpoints
 
@@ -65,7 +71,6 @@ Content-Type: application/json
 {
   "tenant_id": "tenant-acme",
   "url": "https://acme.example.com/webhook",
-  "description": "Production webhook",
   "event_types": ["order.*", "invoice.created"],
   "headers": {"X-Custom": "value"},
   "rate_limit": 100,
@@ -80,6 +85,8 @@ Content-Type: application/json
 ```http
 GET /endpoints?tenant_id=tenant-acme&limit=20&offset=0
 ```
+
+`tenant_id` is required here; without it you get a 400.
 
 ### Get endpoint
 
@@ -137,7 +144,7 @@ Content-Type: application/json
 }
 ```
 
-**Response:** `201 Created`
+**Response:** `202 Accepted` with the stored event.
 
 ### List events
 
@@ -180,9 +187,12 @@ POST /dlq/replay
 Content-Type: application/json
 
 {
-  "ids": ["dlq_01h455vb...", "dlq_01h456ab..."]
+  "from": "2025-01-01T00:00:00Z",
+  "to": "2025-01-02T00:00:00Z"
 }
 ```
+
+Replays every entry that failed between `from` and `to` (RFC 3339) and answers `{"replayed": <count>}`. A single replay answers `204 No Content`, `404` for an unknown entry and `409` for one already replayed.
 
 ## Stats
 
@@ -192,7 +202,7 @@ Content-Type: application/json
 GET /stats
 ```
 
-Returns counts of events, deliveries, DLQ entries, and endpoints.
+Returns `{"pending_deliveries": <n>, "dlq_size": <n>}`.
 
 ## Error responses
 
@@ -208,5 +218,5 @@ All errors return a JSON object with an `error` field:
 |----------|-------------|
 | Resource not found | 404 |
 | Invalid input / validation | 400 |
-| Duplicate idempotency key | 200 (no-op) |
+| Duplicate idempotency key | 202 (no-op) |
 | Internal error | 500 |

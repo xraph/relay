@@ -33,16 +33,16 @@ r.Send(ctx, &event.Event{
 
 ## The scope package
 
-The `scope` package provides context-level scoping for app and organization IDs. In standalone mode, scope is a no-op:
+The `scope` package has two helpers, and neither does anything yet. `scope.Capture(ctx)` always returns two empty strings and `scope.Restore(ctx, appID, orgID)` returns the context unchanged, in standalone mode and under Forge alike:
 
 ```go
 import "github.com/xraph/relay/scope"
 
-appID, orgID := scope.Capture(ctx)   // returns empty strings in standalone mode
-ctx = scope.Restore(ctx, appID, orgID)
+appID, orgID := scope.Capture(ctx)     // always "", ""
+ctx = scope.Restore(ctx, appID, orgID) // returns ctx as is
 ```
 
-When used with the Forge framework, the scope package reads app and organization IDs from the Forge context.
+Tenant isolation comes from `TenantID`, not from these helpers.
 
 ## Scope fields on entities
 
@@ -52,4 +52,4 @@ When used with the Forge framework, the scope package reads app and organization
 | `Endpoint` | `ScopeAppID`, `ScopeOrgID` |
 | `Event` | `ScopeAppID`, `ScopeOrgID` |
 
-These fields are populated automatically by `Send()` using `scope.Capture(ctx)`.
+`Send()` fills the event's fields from `scope.Capture(ctx)`, so today they are always empty.

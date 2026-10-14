@@ -5,28 +5,28 @@ description: Composable webhook delivery engine for Go.
 
 Relay is a Go library that handles webhook delivery for multi-tenant SaaS applications. Import it into your Go program to get dynamic event type definitions, tenant-scoped endpoints, guaranteed delivery with HMAC-SHA256 signatures, retry with exponential backoff, dead letter queues, and replay capabilities.
 
-Relay is a **library** -- not a service. You bring your own HTTP server, database, and auth layer. Relay provides the webhook plumbing.
+Relay is a library, not a service. You bring your own HTTP server, database, and auth layer. Relay provides the webhook plumbing.
 
 ## What it does
 
-- **Dynamic webhook catalog** -- Register event types at runtime with optional JSON Schema validation.
-- **Tenant-scoped endpoints** -- Each endpoint belongs to a tenant and subscribes to event types via glob patterns.
-- **Guaranteed delivery** -- Exponential backoff retries (default: 5s, 30s, 2m, 15m, 2h). Failed deliveries land in the dead letter queue.
-- **HMAC-SHA256 signatures** -- Every delivery is signed. Receivers verify authenticity with a single function call.
-- **Rate limiting** -- Per-endpoint token bucket limiter prevents overloading downstream services.
-- **Admin HTTP API** -- Full CRUD for event types, endpoints, events, deliveries, and DLQ replay.
-- **Observability** -- Prometheus counters, latency histograms, DLQ gauges, and OpenTelemetry tracing per delivery.
-- **Pluggable storage** -- Memory, PostgreSQL (pgx/v5), or Grove ORM. Implement `store.Store` for anything else.
+- Dynamic webhook catalog: register event types at runtime with optional JSON Schema validation.
+- Tenant-scoped endpoints: each endpoint belongs to a tenant and subscribes to event types via glob patterns.
+- Retried delivery: exponential backoff retries (default: 5s, 30s, 2m, 15m, 2h). Failed deliveries land in the dead letter queue.
+- HMAC-SHA256 signatures: every delivery is signed. Receivers verify authenticity with a single function call.
+- Rate limiting: a per-endpoint token bucket limiter prevents overloading downstream services.
+- Admin HTTP API: CRUD for event types, endpoints, events, deliveries, and DLQ replay.
+- Observability: counters, a latency histogram and gauges through go-utils metrics (Forge's metrics in an app), and an OpenTelemetry span per delivery.
+- Pluggable storage: memory, plus PostgreSQL, SQLite, MongoDB and Redis through Grove. Implement `store.Store` for anything else.
 
 ## Design philosophy
 
-**Library, not framework.** Relay is a set of Go packages you import, not a binary you deploy. You control the `main` function, the HTTP server, and the process lifecycle.
+Relay is a library, not a framework. It is a set of Go packages you import, not a binary you deploy. You control the `main` function, the HTTP server, and the process lifecycle.
 
-**Interfaces over implementations.** Every subsystem defines a Go interface. The library ships with defaults (in-memory store, built-in sender), but you can replace any piece.
+Every subsystem defines a Go interface. The library ships with defaults (in-memory store, built-in sender), but you can replace any piece.
 
-**Composable stores.** Each subsystem has its own store interface. The aggregate `store.Store` composes them all. Swap the entire backend with a single type.
+Each subsystem has its own store interface. The aggregate `store.Store` composes them all. Swap the entire backend with a single type.
 
-**Multi-tenant by default.** Every endpoint and event is scoped to a tenant ID. The `scope` package captures context-level app and organization IDs.
+Every endpoint and event is scoped to a tenant ID. (The `scope` package for app and organization IDs is a stub today: it captures nothing.)
 
 ## Quick look
 
@@ -65,14 +65,17 @@ func main() {
         EventTypes: []string{"order.*"},
     })
 
+    r.Start(ctx)
+    defer r.Stop(ctx)
+
     r.Send(ctx, &event.Event{
         Type:     "order.created",
         TenantID: "tenant-acme",
         Data:     json.RawMessage(`{"order_id":"ORD-001","amount":99.99}`),
     })
 
-    r.Start(ctx)
-    defer r.Stop(ctx)
+    // Send only queues the delivery. A real program keeps running
+    // so the engine can deliver it.
 }
 ```
 

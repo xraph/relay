@@ -12,11 +12,16 @@ The PostgreSQL store uses [Grove ORM](https://github.com/xraph/grove) with the `
 ```go
 import (
     "github.com/xraph/grove"
-    _ "github.com/xraph/grove/drivers/pgdriver"
+    "github.com/xraph/grove/drivers/pgdriver"
     pgstore "github.com/xraph/relay/store/postgres"
 )
 
-db, err := grove.Open("pg", "postgres://user:pass@localhost:5432/relay?sslmode=disable")
+drv := pgdriver.New()
+if err := drv.Open(ctx, "postgres://user:pass@localhost:5432/relay?sslmode=disable"); err != nil {
+    log.Fatal(err)
+}
+
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -35,7 +40,7 @@ r, err := relay.New(relay.WithStore(s))
 When using the Forge extension with Grove, the store is auto-constructed from the DI container:
 
 ```go
-app.Use(extension.New(
+app.RegisterExtension(extension.New(
     extension.WithGroveDatabase(""),  // uses the default grove.DB
 ))
 ```
@@ -52,13 +57,15 @@ See the [Forge Extension guide](/docs/guides/forge-extension) for details.
 
 ## Migrations
 
-Call `s.Migrate(ctx)` before first use. Migrations are managed by the Grove migrator with Go-defined migration functions. The migration group is named `"relay"` and creates five tables:
+Call `s.Migrate(ctx)` before first use. Migrations are managed by the Grove migrator with Go-defined migration functions. The migration group is named `"relay"` and creates these tables:
 
-- `relay_event_types` -- event type catalog
-- `relay_endpoints` -- webhook endpoints
-- `relay_events` -- inbound events
-- `relay_deliveries` -- delivery queue with `FOR UPDATE SKIP LOCKED` dequeue
-- `relay_dlq` -- dead letter queue
+- `relay_event_types`: the event type catalog
+- `relay_endpoints`: webhook endpoints
+- `relay_events`: inbound events
+- `relay_deliveries`: the delivery queue, dequeued with `FOR UPDATE SKIP LOCKED`
+- `relay_delivery_attempts`: one row per HTTP attempt
+- `relay_dlq`: the dead letter queue
+- `relay_acceptances`: `SendReliable` receipts
 
 ## Internals
 

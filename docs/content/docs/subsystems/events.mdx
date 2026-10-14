@@ -20,9 +20,9 @@ err := r.Send(ctx, &event.Event{
 
 `Send()` executes these checks in order:
 
-1. **Type lookup** -- Verify the event type exists in the catalog.
-2. **Deprecation check** -- Reject deprecated event types.
-3. **Schema validation** -- If the event type has a JSON Schema, validate `Data` against it.
+1. Type lookup: the event type has to exist in the catalog.
+2. Deprecation check: deprecated event types are rejected.
+3. Schema validation: if the event type has a JSON Schema, `Data` is validated against it.
 
 ## Idempotency
 
@@ -34,7 +34,7 @@ After validation, `Send()` resolves matching endpoints and creates one `Delivery
 
 1. Resolve endpoints for the tenant whose subscription patterns match the event type.
 2. Create a `Delivery` per matched endpoint.
-3. The delivery engine picks up pending deliveries on its next poll cycle.
+3. `Send` wakes the delivery engine, which picks the pending deliveries up straight away.
 
 ## Event entity
 
@@ -45,6 +45,8 @@ type Event struct {
     Type           string `json:"type"`
     TenantID       string `json:"tenant_id"`
     Data           any    `json:"data"`
+    ScopeAppID     string `json:"scope_app_id,omitempty"` // always empty today
+    ScopeOrgID     string `json:"scope_org_id,omitempty"` // always empty today
     IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 ```
@@ -56,5 +58,7 @@ type Store interface {
     CreateEvent(ctx context.Context, evt *Event) error
     GetEvent(ctx context.Context, evtID id.ID) (*Event, error)
     ListEvents(ctx context.Context, opts ListOpts) ([]*Event, error)
+    ListEventsByTenant(ctx context.Context, tenantID string, opts ListOpts) ([]*Event, error)
+    ListEventsPage(ctx context.Context, q Query) (*Page, error)
 }
 ```
