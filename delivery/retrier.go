@@ -33,6 +33,8 @@ type Result struct {
 	// errClass describes a failure with no response in a few fixed words:
 	// an errClass value, or a failure before anything was sent.
 	errClass string
+	// errType is the Go type of the innermost error, for exception.type.
+	errType string
 }
 
 // Retrier decides what to do after a delivery attempt.

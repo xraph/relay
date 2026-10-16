@@ -4,16 +4,20 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/errs"
+	"github.com/xraph/relay/internal/tracing"
 	"github.com/xraph/relay/observability"
 	"github.com/xraph/relay/ratelimit"
 )
@@ -45,7 +49,10 @@ type EngineConfig struct {
 	RequestTimeout  time.Duration
 	RetrySchedule   []time.Duration
 	Metrics         *observability.Metrics
-	Tracer          *observability.Tracer
+
+	// Deprecated: Tracer is ignored. The engine traces every delivery
+	// through the global tracer provider, which forge.New installs.
+	Tracer *observability.Tracer //nolint:staticcheck // the deprecated type, kept so old callers compile
 	// HTTPClient sends deliveries. Nil means a plain client with RequestTimeout.
 	HTTPClient *http.Client
 }
@@ -84,6 +91,10 @@ const (
 	skipStoreError = "store_error"
 )
 
+// statusStoreError describes a failed span whose store call went wrong. The
+// error itself is logged; the span carries its Go type.
+const statusStoreError = "store error"
+
 // NewEngine creates a delivery engine.
 func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Logger) *Engine {
 	if logger == nil {
@@ -111,9 +122,11 @@ func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Lo
 	}
 }
 
-// Start begins the delivery workers and poll loop.
+// Start begins the delivery workers and poll loop. The engine keeps ctx's
+// values and cancellation but not its span: each delivery starts a trace of
+// its own, and an empty poll starts none.
 func (e *Engine) Start(ctx context.Context) {
-	ctx, e.cancel = context.WithCancel(ctx)
+	ctx, e.cancel = context.WithCancel(tracing.Detach(ctx))
 	e.SyncPending(ctx)
 
 	e.wg.Add(1)
@@ -205,23 +218,33 @@ func (e *Engine) pollLoop(ctx context.Context) {
 	}
 }
 
-// process handles a single delivery: fetch endpoint + event, send, decide, update.
+// process handles a single delivery: fetch endpoint + event, send, decide,
+// update. That is one unit of work, so it gets a root span of its own.
 func (e *Engine) process(ctx context.Context, d *Delivery) {
+	// Outside the span: a count after every delivery is bookkeeping, and
+	// would put a query under every delivery trace.
 	defer e.SyncPending(ctx)
-	// Start a tracing span for this delivery attempt.
-	var span trace.Span
-	if e.config.Tracer != nil {
-		ctx, span = e.config.Tracer.StartDeliverySpan(ctx, d.ID.String(), d.EventID.String(), d.EndpointID.String())
+
+	attrs := []attribute.KeyValue{
+		attribute.String("relay.delivery.id", d.ID.String()),
+		attribute.String("relay.event.id", d.EventID.String()),
+		attribute.String("relay.endpoint.id", d.EndpointID.String()),
 	}
+	if d.EventType != "" {
+		attrs = append(attrs, attribute.String("relay.event.type", d.EventType))
+	}
+	ctx, span := tracing.Start(ctx, "deliver webhook",
+		trace.WithNewRoot(),
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attrs...),
+	)
+	defer span.End()
 
 	ep, err := e.store.GetEndpoint(ctx, d.EndpointID)
 	if err != nil {
 		e.logger.Error("get endpoint failed",
 			log.String("delivery_id", d.ID.String()), log.String("endpoint_id", d.EndpointID.String()), log.Any("error", err))
-		if span != nil {
-			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
-		}
-		e.release(ctx, d, err, errs.ErrEndpointNotFound, "endpoint no longer exists")
+		e.release(ctx, span, d, err, errs.ErrEndpointNotFound, "endpoint no longer exists")
 		return
 	}
 
@@ -229,10 +252,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	if err != nil {
 		e.logger.Error("get event failed",
 			log.String("delivery_id", d.ID.String()), log.String("event_id", d.EventID.String()), log.Any("error", err))
-		if span != nil {
-			e.config.Tracer.EndDeliverySpan(span, 0, 0, err.Error())
-		}
-		e.release(ctx, d, err, errs.ErrEventNotFound, "event no longer exists")
+		e.release(ctx, span, d, err, errs.ErrEventNotFound, "event no longer exists")
 		return
 	}
 
@@ -241,13 +261,11 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	if !e.limiter.Allow(ep.ID.String(), ep.RateLimit) {
 		d.State = StatePending
 		d.NextAttemptAt = time.Now().UTC().Add(time.Second / time.Duration(ep.RateLimit))
-		if span != nil {
-			e.config.Tracer.EndDeliverySpan(span, 0, 0, "rate limited")
-		}
-		e.recordSkip(skipRateLimited)
+		e.recordSkip(span, skipRateLimited)
 		if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 			e.logger.Error("defer rate-limited delivery failed",
 				log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+			storeFailed(span, updateErr)
 		}
 		return
 	}
@@ -265,7 +283,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 
 	// Decide what to do next.
 	decision := e.retrier.Decide(result, d)
-	e.recordAttempt(result, outcomeOf(decision))
+	e.recordAttempt(span, d.AttemptCount, result, outcomeOf(decision))
 
 	switch decision {
 	case Delivered:
@@ -289,7 +307,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		now := time.Now().UTC()
 		d.State = StateFailed
 		d.CompletedAt = &now
-		e.pushDLQ(ctx, d, ep, evt, result)
+		e.pushDLQ(ctx, span, d, ep, evt, result)
 		e.logger.Warn("delivery failed permanently",
 			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.String("error", result.Error))
 
@@ -300,8 +318,9 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		if disableErr := e.store.SetEnabled(ctx, d.EndpointID, false); disableErr != nil {
 			e.logger.Error("disable endpoint failed",
 				log.String("endpoint_id", d.EndpointID.String()), log.Any("error", disableErr))
+			storeFailed(span, disableErr)
 		}
-		e.pushDLQ(ctx, d, ep, evt, result)
+		e.pushDLQ(ctx, span, d, ep, evt, result)
 		e.logger.Warn("endpoint disabled (410 Gone)",
 			log.String("endpoint_id", d.EndpointID.String()), log.String("delivery_id", d.ID.String()))
 	}
@@ -327,16 +346,13 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	if recErr := e.store.RecordAttempt(ctx, attempt); recErr != nil {
 		e.logger.Error("record attempt failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", recErr))
-	}
-
-	// End the tracing span with the final result.
-	if span != nil {
-		e.config.Tracer.EndDeliverySpan(span, d.LastStatusCode, d.LastLatencyMs, d.LastError)
+		storeFailed(span, recErr)
 	}
 
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 		e.logger.Error("update delivery failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+		storeFailed(span, updateErr)
 	}
 }
 
@@ -345,28 +361,38 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 // never dequeued again.
 //
 // A missing endpoint or event will not come back, so the delivery fails.
-// Anything else is a store hiccup, so it goes back to pending for a later
-// attempt without counting one: nothing was sent.
-func (e *Engine) release(ctx context.Context, d *Delivery, err, gone error, reason string) {
+// That is not an error on the span: nothing went wrong in relay. Anything
+// else is a store hiccup, so it goes back to pending for a later attempt
+// without counting one: nothing was sent.
+func (e *Engine) release(ctx context.Context, span trace.Span, d *Delivery, err, gone error, reason string) {
 	if errors.Is(err, gone) {
 		now := time.Now().UTC()
 		d.State = StateFailed
 		d.CompletedAt = &now
 		d.LastError = reason
-		e.recordSkip(skipOrphaned)
+		e.recordSkip(span, skipOrphaned)
 	} else {
 		d.State = StatePending
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(1)
-		e.recordSkip(skipStoreError)
+		e.recordSkip(span, skipStoreError)
+		storeFailed(span, err)
 	}
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 		e.logger.Error("release delivery failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+		storeFailed(span, updateErr)
 	}
 }
 
+// storeFailed marks span failed by a store call. The call site logs the
+// error; the span gets only its Go type, because driver messages quote
+// values.
+func storeFailed(span trace.Span, err error) {
+	tracing.Fail(span, statusStoreError, tracing.ErrorType(err))
+}
+
 // pushDLQ parks a delivery that failed for good in the dead letter queue.
-func (e *Engine) pushDLQ(ctx context.Context, d *Delivery, ep *endpoint.Endpoint, evt *event.Event, result Result) {
+func (e *Engine) pushDLQ(ctx context.Context, span trace.Span, d *Delivery, ep *endpoint.Endpoint, evt *event.Event, result Result) {
 	if e.dlq == nil {
 		return
 	}
@@ -374,15 +400,32 @@ func (e *Engine) pushDLQ(ctx context.Context, d *Delivery, ep *endpoint.Endpoint
 	if err != nil {
 		e.logger.Error("push to DLQ failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", err))
+		storeFailed(span, err)
 	}
 	if e.config.Metrics != nil {
 		e.config.Metrics.RecordDLQPush(err)
 	}
 }
 
-// recordAttempt counts an attempt by its outcome and, when a request went
-// out, times it by status class or, with no response, by error class.
-func (e *Engine) recordAttempt(result Result, outcome Outcome) {
+// recordAttempt puts an attempt's outcome on its span, counts it and, when a
+// request went out, times it by status class or, with no response, by error
+// class. Any outcome but delivered fails the span. Its status names the
+// response status or the error class, never the error text: a transport
+// error quotes the endpoint's URL.
+func (e *Engine) recordAttempt(span trace.Span, attemptNum int, result Result, outcome Outcome) {
+	span.SetAttributes(
+		attribute.Int("relay.delivery.attempt", attemptNum),
+		attribute.String("relay.delivery.outcome", string(outcome)),
+	)
+	if result.StatusCode > 0 {
+		span.SetAttributes(semconv.HTTPResponseStatusCode(result.StatusCode))
+	}
+	if outcome != OutcomeDelivered {
+		class := failureClass(result)
+		span.SetAttributes(semconv.ErrorTypeKey.String(class))
+		tracing.Fail(span, class, result.errType)
+	}
+
 	m := e.config.Metrics
 	if m == nil {
 		return
@@ -398,8 +441,24 @@ func (e *Engine) recordAttempt(result Result, outcome Outcome) {
 	m.ObserveDelivery(statusClass(result.StatusCode), errType, result.duration.Seconds())
 }
 
-// recordSkip counts a dequeued delivery that was not attempted.
-func (e *Engine) recordSkip(reason string) {
+// failureClass is the error.type of a failed attempt: the response status as
+// a string when there was one, as the HTTP conventions have it, or else the
+// error class.
+func failureClass(result Result) string {
+	switch {
+	case result.StatusCode > 0:
+		return strconv.Itoa(result.StatusCode)
+	case result.errClass != "":
+		return result.errClass
+	default:
+		return errClassOther
+	}
+}
+
+// recordSkip puts the reason a dequeued delivery was not attempted on its
+// span, and counts it.
+func (e *Engine) recordSkip(span trace.Span, reason string) {
+	span.SetAttributes(attribute.String("relay.delivery.outcome", reason))
 	if e.config.Metrics != nil {
 		e.config.Metrics.RecordSkip(reason)
 	}

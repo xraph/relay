@@ -141,11 +141,9 @@ func (e *Extension) Init(fapp forge.App) error {
 	relayOpts = append(relayOpts, e.opts...)
 	relayOpts = append(relayOpts, e.config.ToRelayOptions()...)
 
-	// Wire observability through the forge-managed metrics system.
-	relayOpts = append(relayOpts,
-		relay.WithMetrics(observability.NewMetrics(fapp.Metrics())),
-		relay.WithTracer(observability.NewTracer()),
-	)
+	// Metrics go to the app's registry. Spans need no option: relay starts
+	// them on the global tracer provider, which forge.New installed.
+	relayOpts = append(relayOpts, relay.WithMetrics(observability.NewMetrics(fapp.Metrics())))
 
 	var err error
 	e.r, err = relay.New(relayOpts...)

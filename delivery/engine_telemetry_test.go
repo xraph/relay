@@ -6,9 +6,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
@@ -16,6 +23,7 @@ import (
 	"github.com/xraph/relay/internal/entity"
 	"github.com/xraph/relay/internal/errs"
 	"github.com/xraph/relay/internal/metricstest"
+	"github.com/xraph/relay/internal/tracing/tracingtest"
 	"github.com/xraph/relay/observability"
 )
 
@@ -272,5 +280,240 @@ func TestInFlightGaugeFollowsTheWorkers(t *testing.T) {
 	fx.engine.Stop(context.Background())
 	if got := gauge(); got != 0 {
 		t.Errorf("in flight after Stop = %v, want 0", got)
+	}
+}
+
+// secretURL is a webhook URL shaped like the ones tenants register: the
+// secret in the path, a token and an email in the query.
+func secretURL(base string) string {
+	return base + "/hooks/T000/B000/XXXXSECRET?token=sk_live_SECRET&email=alice%40example.com"
+}
+
+func TestDeliverySpanIsARootWithATracedRequestUnderIt(t *testing.T) {
+	rec := tracingtest.Record(t)
+	type seen struct{ path, query, traceparent, auth string }
+	got := make(chan seen, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{r.URL.Path, r.URL.RawQuery, r.Header.Get("traceparent"), r.Header.Get("Authorization")}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	fx := newTelemetryFixture(t, secretURL(srv.URL), fakeDLQ{})
+	fx.store.ep.Headers = map[string]string{"Authorization": "Bearer topsecret"}
+	d := fx.delivery(3)
+
+	// A caller's span in ctx must not become the delivery's parent.
+	callerCtx, caller := otel.Tracer("test").Start(context.Background(), "caller")
+	fx.engine.process(callerCtx, d)
+	caller.End()
+	req := <-got
+
+	deliver := tracingtest.Named(t, rec, "deliver webhook")
+	client := tracingtest.Named(t, rec, "HTTP POST")
+
+	if deliver.Parent().IsValid() {
+		t.Error("deliver webhook has a parent, want a root span")
+	}
+	if deliver.SpanContext().TraceID() == caller.SpanContext().TraceID() {
+		t.Error("deliver webhook joined the caller's trace")
+	}
+	if deliver.SpanKind() != trace.SpanKindInternal || client.SpanKind() != trace.SpanKindClient {
+		t.Errorf("kinds = %v, %v, want internal, client", deliver.SpanKind(), client.SpanKind())
+	}
+	if client.Parent().SpanID() != deliver.SpanContext().SpanID() {
+		t.Error("the request span is not a child of deliver webhook")
+	}
+	if deliver.Status().Code != codes.Unset {
+		t.Errorf("delivered span status = %v", deliver.Status())
+	}
+
+	a := tracingtest.Attrs(deliver)
+	for key, want := range map[attribute.Key]any{
+		"relay.delivery.id":         d.ID.String(),
+		"relay.event.id":            d.EventID.String(),
+		"relay.endpoint.id":         d.EndpointID.String(),
+		"relay.event.type":          "invoice.paid",
+		"relay.delivery.attempt":    int64(1),
+		"relay.delivery.outcome":    "delivered",
+		"http.response.status_code": int64(200),
+	} {
+		if v, ok := a[key]; !ok || v.AsInterface() != want {
+			t.Errorf("deliver webhook %s = %v, want %v", key, v.AsInterface(), want)
+		}
+	}
+
+	ca := tracingtest.Attrs(client)
+	if ca["url.full"].AsString() != "http://REDACTED" || ca["server.address"].AsString() != "REDACTED" {
+		t.Errorf("client span url.full=%q server.address=%q, want both redacted",
+			ca["url.full"].AsString(), ca["server.address"].AsString())
+	}
+	if ca["http.request.method"].AsString() != http.MethodPost {
+		t.Errorf("client span method = %q", ca["http.request.method"].AsString())
+	}
+
+	// The receiver still gets the real URL, its headers and the trace.
+	if req.path != "/hooks/T000/B000/XXXXSECRET" || req.query == "" || req.auth != "Bearer topsecret" {
+		t.Errorf("receiver saw path %q query %q auth %q", req.path, req.query, req.auth)
+	}
+	if !strings.Contains(req.traceparent, deliver.SpanContext().TraceID().String()) {
+		t.Errorf("traceparent %q does not carry the delivery's trace", req.traceparent)
+	}
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	tracingtest.AssertNoLeak(t, rec.Ended(), host, "127.0.0.1", "SECRET", "hooks", "alice", "topsecret")
+}
+
+func TestFailedDeliverySpans(t *testing.T) {
+	t.Run("server error", func(t *testing.T) {
+		rec := tracingtest.Record(t)
+		fx := newTelemetryFixture(t, secretURL(statusServer(t, http.StatusServiceUnavailable).URL), fakeDLQ{})
+		fx.engine.process(context.Background(), fx.delivery(3))
+
+		deliver := tracingtest.Named(t, rec, "deliver webhook")
+		if deliver.Status().Code != codes.Error || deliver.Status().Description != "503" {
+			t.Errorf("status = %v, want Error 503", deliver.Status())
+		}
+		a := tracingtest.Attrs(deliver)
+		if a["relay.delivery.outcome"].AsString() != "retry" || a["error.type"].AsString() != "503" {
+			t.Errorf("outcome %q error.type %q", a["relay.delivery.outcome"].AsString(), a["error.type"].AsString())
+		}
+		tracingtest.AssertNoLeak(t, rec.Ended(), "SECRET", "alice", "127.0.0.1")
+	})
+
+	t.Run("connection refused", func(t *testing.T) {
+		rec := tracingtest.Record(t)
+		srv := httptest.NewServer(http.NotFoundHandler())
+		url := secretURL(srv.URL)
+		host := strings.TrimPrefix(srv.URL, "http://")
+		srv.Close()
+
+		fx := newTelemetryFixture(t, url, fakeDLQ{})
+		d := fx.delivery(3)
+		fx.engine.process(context.Background(), d)
+
+		deliver := tracingtest.Named(t, rec, "deliver webhook")
+		client := tracingtest.Named(t, rec, "HTTP POST")
+		if deliver.Status().Code != codes.Error || deliver.Status().Description != "connection" {
+			t.Errorf("deliver status = %v, want Error connection", deliver.Status())
+		}
+		if types := tracingtest.ExceptionTypes(deliver); len(types) != 1 || types[0] == "" {
+			t.Errorf("exception types = %v, want one Go type", types)
+		}
+		if client.Status().Code != codes.Error || client.Status().Description != "connection" {
+			t.Errorf("client status = %v, want Error connection", client.Status())
+		}
+		if tracingtest.Attrs(client)["error.type"].AsString() != "connection" {
+			t.Errorf("client error.type = %q", tracingtest.Attrs(client)["error.type"].AsString())
+		}
+		tracingtest.AssertNoLeak(t, rec.Ended(), host, "127.0.0.1", "SECRET", "hooks", "alice", "dial")
+
+		// The tenant still gets the full error on the delivery.
+		fx.store.mu.Lock()
+		last := fx.store.updated[len(fx.store.updated)-1]
+		fx.store.mu.Unlock()
+		if !strings.Contains(last.LastError, "127.0.0.1") {
+			t.Errorf("delivery error %q lost its detail", last.LastError)
+		}
+	})
+
+	t.Run("truncated response", func(t *testing.T) {
+		rec := tracingtest.Record(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "100")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("short"))
+		}))
+		t.Cleanup(srv.Close)
+
+		fx := newTelemetryFixture(t, srv.URL, fakeDLQ{})
+		fx.engine.process(context.Background(), fx.delivery(3))
+
+		// The read error comes back whole for the delivery record, and
+		// masked on the request span.
+		fx.store.mu.Lock()
+		last := fx.store.updated[len(fx.store.updated)-1]
+		fx.store.mu.Unlock()
+		if last.LastError != "read response: unexpected EOF" {
+			t.Errorf("delivery error = %q", last.LastError)
+		}
+		client := tracingtest.Named(t, rec, "HTTP POST")
+		if client.Status().Code == codes.Error && client.Status().Description != "connection" {
+			t.Errorf("client status = %v, want the masked class", client.Status())
+		}
+	})
+}
+
+func TestSkippedDeliverySpans(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(*telemetryFixture)
+		outcome string
+		failed  bool
+	}{
+		{"orphaned", func(fx *telemetryFixture) { fx.store.epErr = errs.ErrEndpointNotFound }, "orphaned", false},
+		{"store error", func(fx *telemetryFixture) { fx.store.epErr = errors.New("alice@example.com: no route") }, "store_error", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := tracingtest.Record(t)
+			fx := newTelemetryFixture(t, statusServer(t, http.StatusOK).URL, fakeDLQ{})
+			c.setup(fx)
+			fx.engine.process(context.Background(), fx.delivery(3))
+
+			deliver := tracingtest.Named(t, rec, "deliver webhook")
+			if got := tracingtest.Attrs(deliver)["relay.delivery.outcome"].AsString(); got != c.outcome {
+				t.Errorf("outcome = %q, want %q", got, c.outcome)
+			}
+			if failed := deliver.Status().Code == codes.Error; failed != c.failed {
+				t.Errorf("status = %v, want failed=%v", deliver.Status(), c.failed)
+			}
+			if c.failed && deliver.Status().Description != "store error" {
+				t.Errorf("status description = %q", deliver.Status().Description)
+			}
+			tracingtest.AssertNoLeak(t, rec.Ended(), "alice")
+		})
+	}
+}
+
+// Under Forge, Start's ctx carries the "start relay" boot span. Deliveries
+// must not land in that trace, and its baggage must not reach receivers.
+func TestEngineStartDetachesFromTheBootSpan(t *testing.T) {
+	rec := tracingtest.Record(t)
+	type seen struct{ traceparent, baggage string }
+	got := make(chan seen, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{r.Header.Get("traceparent"), r.Header.Get("baggage")}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	fx := newTelemetryFixture(t, srv.URL, fakeDLQ{})
+	fx.store.queue = []*Delivery{fx.delivery(3)}
+
+	member, err := baggage.NewMember("user", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootCtx, boot := otel.Tracer("test").Start(baggage.ContextWithBaggage(context.Background(), bag), "start relay")
+	fx.engine.Start(bootCtx)
+	boot.End()
+	fx.engine.Wake()
+	req := <-got
+	fx.engine.Stop(context.Background())
+
+	deliver := tracingtest.Named(t, rec, "deliver webhook")
+	if deliver.Parent().IsValid() || deliver.SpanContext().TraceID() == boot.SpanContext().TraceID() {
+		t.Error("the delivery joined the boot trace")
+	}
+	if req.traceparent == "" || strings.Contains(req.traceparent, boot.SpanContext().TraceID().String()) {
+		t.Errorf("traceparent = %q, want the delivery's own trace", req.traceparent)
+	}
+	if req.baggage != "" {
+		t.Errorf("receiver got baggage %q", req.baggage)
 	}
 }

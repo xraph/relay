@@ -26,7 +26,6 @@ type Relay struct {
 	dlqSvc      *dlq.Service
 	logger      log.Logger
 	metrics     *observability.Metrics
-	tracer      *observability.Tracer
 
 	// wakeStop terminates the store wake listener (store.WakeNotifier);
 	// nil when the store has no push capability.
@@ -105,7 +104,9 @@ func WithBatchSize(n int) Option {
 
 // WithHTTPClient sets the client deliveries are sent with, for example one
 // whose dialer refuses private networks. A client with no Timeout uses the
-// configured request timeout.
+// configured request timeout. Relay copies the client and wraps its transport
+// in tracing that keeps the endpoint's URL off the spans, so pass a transport
+// that isn't traced already (not forge.HTTPClient's).
 func WithHTTPClient(c *http.Client) Option {
 	return func(r *Relay) error {
 		if c == nil {
@@ -158,7 +159,10 @@ func WithCacheTTL(d time.Duration) Option {
 	}
 }
 
-// WithMetrics sets the Prometheus metrics recorder for the Relay instance.
+// WithMetrics records relay's metrics on m. Build m with
+// observability.NewMetrics over a go-utils metric factory; in a Forge app the
+// extension passes app.Metrics() for you. Without it relay records no
+// metrics.
 func WithMetrics(m *observability.Metrics) Option {
 	return func(r *Relay) error {
 		r.metrics = m
@@ -166,10 +170,12 @@ func WithMetrics(m *observability.Metrics) Option {
 	}
 }
 
-// WithTracer sets the OpenTelemetry tracer for the Relay instance.
-func WithTracer(t *observability.Tracer) Option {
-	return func(r *Relay) error {
-		r.tracer = t
+// WithTracer does nothing. Relay traces through the global tracer provider,
+// which forge.New installs, so there is no tracer to pass.
+//
+// Deprecated: Relay traces without a Tracer. Drop the option.
+func WithTracer(*observability.Tracer) Option {
+	return func(*Relay) error {
 		return nil
 	}
 }
