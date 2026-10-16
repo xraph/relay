@@ -3,7 +3,9 @@ package relay_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -12,8 +14,11 @@ import (
 	"github.com/xraph/relay"
 	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
+	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/event"
+	"github.com/xraph/relay/internal/metricstest"
 	"github.com/xraph/relay/internal/tracing/tracingtest"
+	"github.com/xraph/relay/observability"
 	"github.com/xraph/relay/store"
 	"github.com/xraph/relay/store/memory"
 )
@@ -143,5 +148,75 @@ func TestAcceptSpanFailsOnAnUnsupportedStore(t *testing.T) {
 	}
 	if types := tracingtest.ExceptionTypes(accept); len(types) != 1 || types[0] != "acceptance.ErrUnsupported" {
 		t.Errorf("exception types = %v", types)
+	}
+}
+
+// spanProbeStore records whether the background queries relay makes on its
+// own (the poll, the pending count, the wake listener) run under a span.
+type spanProbeStore struct {
+	*memory.Store
+	mu     sync.Mutex
+	valid  map[string][]bool
+	polled chan struct{}
+}
+
+func (s *spanProbeStore) record(ctx context.Context, op string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.valid[op] = append(s.valid[op], trace.SpanContextFromContext(ctx).IsValid())
+}
+
+func (s *spanProbeStore) Dequeue(ctx context.Context, limit int) ([]*delivery.Delivery, error) {
+	s.record(ctx, "dequeue")
+	select {
+	case s.polled <- struct{}{}:
+	default:
+	}
+	return s.Store.Dequeue(ctx, limit)
+}
+
+func (s *spanProbeStore) CountPending(ctx context.Context) (int64, error) {
+	s.record(ctx, "count pending")
+	return s.Store.CountPending(ctx)
+}
+
+func (s *spanProbeStore) StartWakeListener(ctx context.Context, _ func()) (func(), error) {
+	s.record(ctx, "wake listener")
+	return func() {}, nil
+}
+
+// Forge starts relay inside its "start relay" span. Grove starts a db.client
+// span under any valid span in the query's context, so if the engine kept
+// that span every idle poll would add a query to the long-finished boot
+// trace. Nothing relay runs on its own may see it.
+func TestBackgroundQueriesDoNotInheritTheStartSpan(t *testing.T) {
+	tracingtest.Record(t)
+	probe := &spanProbeStore{Store: memory.New(), valid: map[string][]bool{}, polled: make(chan struct{})}
+	r, err := relay.New(relay.WithStore(probe), relay.WithMetrics(observability.NewMetrics(metricstest.New())),
+		relay.WithPollInterval(time.Millisecond), relay.WithMaxPollInterval(2*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bootCtx, boot := otel.Tracer("test").Start(context.Background(), "start relay")
+	r.Start(bootCtx)
+	for range 3 {
+		<-probe.polled
+	}
+	r.Stop(context.Background())
+	boot.End()
+
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	for _, op := range []string{"dequeue", "count pending", "wake listener"} {
+		calls := probe.valid[op]
+		if len(calls) == 0 {
+			t.Errorf("no %s call was observed", op)
+		}
+		for i, valid := range calls {
+			if valid {
+				t.Errorf("%s call %d ran under the start span", op, i)
+			}
+		}
 	}
 }

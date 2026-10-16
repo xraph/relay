@@ -38,11 +38,16 @@ type fakeStore struct {
 	updated   []Delivery
 	attempts  []*Attempt
 	updateErr error
+
+	// The span context each Dequeue and GetEndpoint ran under.
+	dequeueSpans  []trace.SpanContext
+	endpointSpans []trace.SpanContext
 }
 
-func (s *fakeStore) Dequeue(context.Context, int) ([]*Delivery, error) {
+func (s *fakeStore) Dequeue(ctx context.Context, _ int) ([]*Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.dequeueSpans = append(s.dequeueSpans, trace.SpanContextFromContext(ctx))
 	out := s.queue
 	s.queue = nil
 	return out, nil
@@ -55,7 +60,10 @@ func (s *fakeStore) UpdateDelivery(_ context.Context, d *Delivery) error {
 	return s.updateErr
 }
 
-func (s *fakeStore) GetEndpoint(context.Context, id.ID) (*endpoint.Endpoint, error) {
+func (s *fakeStore) GetEndpoint(ctx context.Context, _ id.ID) (*endpoint.Endpoint, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.endpointSpans = append(s.endpointSpans, trace.SpanContextFromContext(ctx))
 	return s.ep, s.epErr
 }
 
@@ -515,5 +523,18 @@ func TestEngineStartDetachesFromTheBootSpan(t *testing.T) {
 	}
 	if req.baggage != "" {
 		t.Errorf("receiver got baggage %q", req.baggage)
+	}
+
+	// The poll's own query runs under no span, so grove starts none for it;
+	// the delivery's queries run under the delivery's span.
+	fx.store.mu.Lock()
+	defer fx.store.mu.Unlock()
+	for i, sc := range fx.store.dequeueSpans {
+		if sc.IsValid() {
+			t.Errorf("dequeue %d ran under span %s", i, sc.SpanID())
+		}
+	}
+	if len(fx.store.endpointSpans) != 1 || fx.store.endpointSpans[0].SpanID() != deliver.SpanContext().SpanID() {
+		t.Errorf("GetEndpoint ran under %v, want the deliver webhook span", fx.store.endpointSpans)
 	}
 }
