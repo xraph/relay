@@ -201,7 +201,7 @@ Every backend runs the same conformance suites in `store/storetest`. If you writ
 | `WithMaxPollInterval(d)` | `30s` | The cap on the idle backoff, which doubles from the poll interval while polls come back empty |
 | `WithBatchSize(n)` | `50` | Deliveries taken per poll |
 | `WithRequestTimeout(d)` | `30s` | HTTP timeout per attempt |
-| `WithHTTPClient(c)` | plain client | The client deliveries go out on, for example one whose dialer refuses private addresses |
+| `WithHTTPClient(c)` | plain client | The client deliveries go out on, for example one whose dialer refuses private addresses. Relay wraps its transport in tracing, so don't pass one that's traced already |
 | `WithMaxRetries(n)` | `5` | Attempts before a delivery goes to the DLQ |
 | `WithRetrySchedule(s)` | `5s, 30s, 2m, 15m, 2h` | Waits between attempts; the last one repeats if you allow more attempts than entries |
 | `WithShutdownTimeout(d)` | `30s` | Stored in `Config`, but the engine's `Stop` doesn't read it yet |

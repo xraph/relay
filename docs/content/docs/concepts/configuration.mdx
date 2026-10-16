@@ -34,7 +34,7 @@ r, err := relay.New(
 | `WithMaxPollInterval(d)` | Cap on the idle backoff, which doubles from the poll interval while polls come back empty | `30s` |
 | `WithBatchSize(n)` | Max deliveries dequeued per poll cycle | `50` |
 | `WithRequestTimeout(d)` | HTTP timeout per delivery attempt | `30s` |
-| `WithHTTPClient(c)` | The client deliveries go out on, for example one whose dialer refuses private addresses | a plain client with the request timeout |
+| `WithHTTPClient(c)` | The client deliveries go out on, for example one whose dialer refuses private addresses. Relay copies it and wraps its transport in the same redacting tracing as its own client, so pass one that isn't traced already | a plain client with the request timeout |
 | `WithMaxRetries(n)` | Maximum delivery attempts before DLQ | `5` |
 | `WithRetrySchedule(s)` | Backoff intervals between retries | `[5s, 30s, 2m, 15m, 2h]` |
 | `WithShutdownTimeout(d)` | Stored in `Config`, but nothing reads it yet. `Stop` cancels the engine and waits for its workers however long that takes | `30s` |
