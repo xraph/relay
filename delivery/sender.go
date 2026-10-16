@@ -17,6 +17,14 @@ import (
 
 const maxResponseBody = 1024 // 1KB cap on response body storage
 
+// Failures before a request goes out. Like the errClass values, they describe
+// a failed attempt without quoting its error.
+const (
+	failInvalidPayload = "invalid_payload"
+	failInvalidRequest = "invalid_request"
+	failNoSigningKey   = "no_signing_key"
+)
+
 // Sender performs HTTP webhook delivery.
 type Sender struct {
 	client *http.Client
@@ -56,12 +64,12 @@ func NewSenderWithClient(client *http.Client, timeout time.Duration) *Sender {
 func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Event, d *Delivery) Result {
 	body, err := json.Marshal(evt.Data)
 	if err != nil {
-		return Result{Error: fmt.Sprintf("marshal payload: %v", err)}
+		return Result{Error: fmt.Sprintf("marshal payload: %v", err), errClass: failInvalidPayload}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.URL, bytes.NewReader(body))
 	if err != nil {
-		return Result{Error: fmt.Sprintf("create request: %v", err)}
+		return Result{Error: fmt.Sprintf("create request: %v", err), errClass: failInvalidRequest}
 	}
 
 	// Standard headers.
@@ -79,7 +87,7 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 	ts := time.Now().Unix()
 	sig, sigErr := signature.Sign(body, ep.Secret, ts)
 	if sigErr != nil {
-		return Result{Error: fmt.Sprintf("endpoint has no signing secret: %v", sigErr)}
+		return Result{Error: fmt.Sprintf("endpoint has no signing secret: %v", sigErr), errClass: failNoSigningKey}
 	}
 	req.Header.Set(HeaderSignature, sig)
 	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
@@ -91,12 +99,16 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 
 	start := time.Now()
 	resp, err := s.client.Do(req)
-	latency := time.Since(start).Milliseconds()
+	elapsed := time.Since(start)
+	latency := int(elapsed.Milliseconds())
 
 	if err != nil {
 		return Result{
 			Error:     err.Error(),
-			LatencyMs: int(latency),
+			LatencyMs: latency,
+			sent:      true,
+			duration:  elapsed,
+			errClass:  classify(err),
 		}
 	}
 	defer resp.Body.Close()
@@ -106,13 +118,17 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 		return Result{
 			StatusCode: resp.StatusCode,
 			Error:      fmt.Sprintf("read response: %v", readErr),
-			LatencyMs:  int(latency),
+			LatencyMs:  latency,
+			sent:       true,
+			duration:   elapsed,
 		}
 	}
 
 	return Result{
 		StatusCode: resp.StatusCode,
 		Response:   string(respBody),
-		LatencyMs:  int(latency),
+		LatencyMs:  latency,
+		sent:       true,
+		duration:   elapsed,
 	}
 }

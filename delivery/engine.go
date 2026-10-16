@@ -63,7 +63,26 @@ type Engine struct {
 	wakeCh chan struct{}
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// inFlight counts the deliveries being processed. It changes under
+	// inFlightMu together with the gauge it feeds, so the gauge is always set
+	// from the exact count, never nudged up and down.
+	inFlightMu sync.Mutex
+	inFlight   int
 }
+
+// Why a dequeued delivery was not attempted. Each is the reason label on
+// relay_deliveries_skipped_total.
+const (
+	// skipRateLimited: the endpoint's rate limit held it back, and it went
+	// back in the queue for when a token is due.
+	skipRateLimited = "rate_limited"
+	// skipOrphaned: its endpoint or event no longer exists, so it failed.
+	skipOrphaned = "orphaned"
+	// skipStoreError: loading its endpoint or event failed, and it went back
+	// in the queue.
+	skipStoreError = "store_error"
+)
 
 // NewEngine creates a delivery engine.
 func NewEngine(store EngineStore, dlq DLQPusher, cfg EngineConfig, logger log.Logger) *Engine {
@@ -171,9 +190,13 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			}
 
 			e.wg.Add(1)
+			e.trackInFlight(1)
 			go func(del *Delivery) {
 				defer e.wg.Done()
-				defer func() { <-sem }()
+				defer func() {
+					e.trackInFlight(-1)
+					<-sem
+				}()
 				e.process(ctx, del)
 			}(d)
 		}
@@ -221,6 +244,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		if span != nil {
 			e.config.Tracer.EndDeliverySpan(span, 0, 0, "rate limited")
 		}
+		e.recordSkip(skipRateLimited)
 		if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 			e.logger.Error("defer rate-limited delivery failed",
 				log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
@@ -239,19 +263,15 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 	d.LastResponse = result.Response
 	d.LastLatencyMs = result.LatencyMs
 
-	latencySeconds := float64(result.LatencyMs) / 1000.0
-
 	// Decide what to do next.
 	decision := e.retrier.Decide(result, d)
+	e.recordAttempt(result, outcomeOf(decision))
 
 	switch decision {
 	case Delivered:
 		now := time.Now().UTC()
 		d.State = StateDelivered
 		d.CompletedAt = &now
-		if e.config.Metrics != nil {
-			e.config.Metrics.RecordDelivery("delivered", latencySeconds)
-		}
 		e.logger.Debug("delivered",
 			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.Int("latency_ms", result.LatencyMs))
 
@@ -262,9 +282,6 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		// claimed state was never attempted again.
 		d.State = StatePending
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(d.AttemptCount)
-		if e.config.Metrics != nil {
-			e.config.Metrics.RecordDelivery("retried", latencySeconds)
-		}
 		e.logger.Debug("retry scheduled",
 			log.String("delivery_id", d.ID.String()), log.Int("attempt", d.AttemptCount), log.Any("next_at", d.NextAttemptAt))
 
@@ -272,16 +289,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		now := time.Now().UTC()
 		d.State = StateFailed
 		d.CompletedAt = &now
-		if e.dlq != nil {
-			if dlqErr := e.dlq.PushFailed(ctx, d, ep, evt, result.Error, result.StatusCode); dlqErr != nil {
-				e.logger.Error("push to DLQ failed",
-					log.String("delivery_id", d.ID.String()), log.Any("error", dlqErr))
-			}
-		}
-		if e.config.Metrics != nil {
-			e.config.Metrics.RecordDelivery("failed", latencySeconds)
-			e.config.Metrics.DLQSize.Inc()
-		}
+		e.pushDLQ(ctx, d, ep, evt, result)
 		e.logger.Warn("delivery failed permanently",
 			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.String("error", result.Error))
 
@@ -293,16 +301,7 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 			e.logger.Error("disable endpoint failed",
 				log.String("endpoint_id", d.EndpointID.String()), log.Any("error", disableErr))
 		}
-		if e.dlq != nil {
-			if dlqErr := e.dlq.PushFailed(ctx, d, ep, evt, result.Error, result.StatusCode); dlqErr != nil {
-				e.logger.Error("push to DLQ failed",
-					log.String("delivery_id", d.ID.String()), log.Any("error", dlqErr))
-			}
-		}
-		if e.config.Metrics != nil {
-			e.config.Metrics.RecordDelivery("failed", latencySeconds)
-			e.config.Metrics.DLQSize.Inc()
-		}
+		e.pushDLQ(ctx, d, ep, evt, result)
 		e.logger.Warn("endpoint disabled (410 Gone)",
 			log.String("endpoint_id", d.EndpointID.String()), log.String("delivery_id", d.ID.String()))
 	}
@@ -354,13 +353,85 @@ func (e *Engine) release(ctx context.Context, d *Delivery, err, gone error, reas
 		d.State = StateFailed
 		d.CompletedAt = &now
 		d.LastError = reason
+		e.recordSkip(skipOrphaned)
 	} else {
 		d.State = StatePending
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(1)
+		e.recordSkip(skipStoreError)
 	}
 	if updateErr := e.store.UpdateDelivery(ctx, d); updateErr != nil {
 		e.logger.Error("release delivery failed",
 			log.String("delivery_id", d.ID.String()), log.Any("error", updateErr))
+	}
+}
+
+// pushDLQ parks a delivery that failed for good in the dead letter queue.
+func (e *Engine) pushDLQ(ctx context.Context, d *Delivery, ep *endpoint.Endpoint, evt *event.Event, result Result) {
+	if e.dlq == nil {
+		return
+	}
+	err := e.dlq.PushFailed(ctx, d, ep, evt, result.Error, result.StatusCode)
+	if err != nil {
+		e.logger.Error("push to DLQ failed",
+			log.String("delivery_id", d.ID.String()), log.Any("error", err))
+	}
+	if e.config.Metrics != nil {
+		e.config.Metrics.RecordDLQPush(err)
+	}
+}
+
+// recordAttempt counts an attempt by its outcome and, when a request went
+// out, times it by status class or, with no response, by error class.
+func (e *Engine) recordAttempt(result Result, outcome Outcome) {
+	m := e.config.Metrics
+	if m == nil {
+		return
+	}
+	m.RecordAttempt(string(outcome))
+	if !result.sent {
+		return
+	}
+	errType := "none"
+	if result.StatusCode == 0 {
+		errType = result.errClass
+	}
+	m.ObserveDelivery(statusClass(result.StatusCode), errType, result.duration.Seconds())
+}
+
+// recordSkip counts a dequeued delivery that was not attempted.
+func (e *Engine) recordSkip(reason string) {
+	if e.config.Metrics != nil {
+		e.config.Metrics.RecordSkip(reason)
+	}
+}
+
+// trackInFlight moves the in-flight count by delta and publishes it.
+func (e *Engine) trackInFlight(delta int) {
+	if e.config.Metrics == nil {
+		return
+	}
+	e.inFlightMu.Lock()
+	defer e.inFlightMu.Unlock()
+	e.inFlight += delta
+	e.config.Metrics.DeliveriesInFlight.Set(float64(e.inFlight))
+}
+
+// statusClass is the status_class label for a response status. Zero means no
+// response came back.
+func statusClass(code int) string {
+	switch {
+	case code == 0:
+		return "none"
+	case code >= 200 && code < 300:
+		return "2xx"
+	case code >= 300 && code < 400:
+		return "3xx"
+	case code >= 400 && code < 500:
+		return "4xx"
+	case code >= 500 && code < 600:
+		return "5xx"
+	default:
+		return "other"
 	}
 }
 
