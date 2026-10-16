@@ -138,6 +138,12 @@ func (e *Extension) Init(fapp forge.App) error {
 
 	// Build relay options from extension config + user options.
 	relayOpts := make([]relay.Option, 0, len(e.opts)+6)
+	// The app's logger first, so a WithRelayOption(relay.WithLogger(...))
+	// still wins. Without it relay logged to a no-op logger, and a failed
+	// DLQ write or delivery update left no trace in a Forge app.
+	if logger := e.Logger(); logger != nil {
+		relayOpts = append(relayOpts, relay.WithLogger(logger))
+	}
 	relayOpts = append(relayOpts, e.opts...)
 	relayOpts = append(relayOpts, e.config.ToRelayOptions()...)
 
