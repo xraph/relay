@@ -39,7 +39,7 @@ r, err := relay.New(
 | `WithRetrySchedule(s)` | Backoff intervals between retries | `[5s, 30s, 2m, 15m, 2h]` |
 | `WithShutdownTimeout(d)` | Stored in `Config`, but nothing reads it yet. `Stop` cancels the engine and waits for its workers however long that takes | `30s` |
 | `WithCacheTTL(d)` | TTL for the catalog's in-memory cache (0 = no cache) | `30s` |
-| `WithMetrics(m)`, `WithTracer(t)` | Delivery metrics and OpenTelemetry spans, see [Observability](/docs/subsystems/observability) | none |
+| `WithMetrics(m)` | Delivery metrics, see [Observability](/docs/subsystems/observability). Spans need no option. `WithTracer(t)` is deprecated and does nothing | none |
 
 ## Config struct
 

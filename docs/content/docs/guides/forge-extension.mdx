@@ -40,7 +40,7 @@ During `Register` the extension:
 
 1. Loads its config from `extensions.relay` (or a top-level `relay` key).
 2. Picks a store (see [store resolution](#store-resolution)).
-3. Builds the engine with the app's metrics and an OpenTelemetry tracer.
+3. Builds the engine with the app's logger and metrics. Spans go to the tracer provider `forge.New` installed, see [Observability](/docs/subsystems/observability).
 4. Runs `Migrate` on the store, unless you turned that off.
 5. Mounts the admin API under the base path, unless you turned that off.
 6. Provides `*relay.Relay` to the container.
