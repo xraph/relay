@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -584,5 +586,68 @@ func TestEngineStartDetachesFromTheBootSpan(t *testing.T) {
 	}
 	if len(fx.store.endpointSpans) != 1 || fx.store.endpointSpans[0].SpanID() != deliver.SpanContext().SpanID() {
 		t.Errorf("GetEndpoint ran under %v, want the deliver webhook span", fx.store.endpointSpans)
+	}
+}
+
+// The engine logs every failed delivery. A transport error's text quotes the
+// endpoint's URL, so the log gets the failure class and status, and the full
+// text stays on the delivery record.
+func TestLogsNeverCarryTheEndpointURL(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+
+	target := statusServer(t, http.StatusBadRequest)
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/moved/MOVEDSECRET", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirect.Close)
+
+	cases := []struct {
+		name        string
+		base        string
+		maxAttempts int
+		dlq         DLQPusher
+		updateErr   error
+		failure     string
+	}{
+		{"delivered", statusServer(t, http.StatusOK).URL, 3, fakeDLQ{}, nil, ""},
+		{"retry", statusServer(t, http.StatusServiceUnavailable).URL, 3, fakeDLQ{}, nil, "503"},
+		{"rejected", statusServer(t, http.StatusBadRequest).URL, 3, fakeDLQ{}, nil, "400"},
+		{"refused", closedURL, 1, fakeDLQ{}, nil, "connection"},
+		{"gone", statusServer(t, http.StatusGone).URL, 3, fakeDLQ{}, nil, ""},
+		{"redirected", redirect.URL, 3, fakeDLQ{}, nil, "400"},
+		{"store failures", closedURL, 1, fakeDLQ{err: errors.New("disk full")}, errors.New("conn lost"), "connection"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			logger := log.NewTestLogger().(*log.TestLogger)
+			fx := newLoggedFixture(t, secretURL(c.base), c.dlq, logger)
+			fx.store.updateErr = c.updateErr
+			fx.engine.process(context.Background(), fx.delivery(c.maxAttempts))
+
+			needles := []string{"SECRET", "token", "alice", "hooks", "127.0.0.1", "dial",
+				strings.TrimPrefix(c.base, "http://"), strings.TrimPrefix(target.URL, "http://")}
+			var failures []string
+			for _, entry := range logger.GetLogs() {
+				texts := []string{entry.Message}
+				for _, f := range entry.Fields {
+					texts = append(texts, fmt.Sprint(f.Value()))
+					if f.Key() == "failure" {
+						failures = append(failures, fmt.Sprint(f.Value()))
+					}
+				}
+				for _, text := range texts {
+					for _, needle := range needles {
+						if strings.Contains(text, needle) {
+							t.Errorf("%s log %q carries %q in %q", entry.Level, entry.Message, needle, text)
+						}
+					}
+				}
+			}
+			if c.failure != "" && !slices.Contains(failures, c.failure) {
+				t.Errorf("logged failures %v, want %q among them", failures, c.failure)
+			}
+		})
 	}
 }

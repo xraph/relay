@@ -301,15 +301,20 @@ func (e *Engine) process(ctx context.Context, d *Delivery) {
 		d.State = StatePending
 		d.NextAttemptAt = e.retrier.ComputeNextAttempt(d.AttemptCount)
 		e.logger.Debug("retry scheduled",
-			log.String("delivery_id", d.ID.String()), log.Int("attempt", d.AttemptCount), log.Any("next_at", d.NextAttemptAt))
+			log.String("delivery_id", d.ID.String()), log.Int("attempt", d.AttemptCount),
+			log.String("failure", failureClass(result)), log.Any("next_at", d.NextAttemptAt))
 
 	case DLQ:
 		now := time.Now().UTC()
 		d.State = StateFailed
 		d.CompletedAt = &now
 		e.pushDLQ(ctx, span, d, ep, evt, result)
+		// The failure class, never result.Error: a transport error quotes the
+		// endpoint's URL, which is customer data and often a credential. The
+		// full text stays on the delivery record, for its tenant.
 		e.logger.Warn("delivery failed permanently",
-			log.String("delivery_id", d.ID.String()), log.Int("status", result.StatusCode), log.String("error", result.Error))
+			log.String("delivery_id", d.ID.String()), log.Int("attempt", d.AttemptCount),
+			log.Int("status", result.StatusCode), log.String("failure", failureClass(result)))
 
 	case DisableEndpoint:
 		now := time.Now().UTC()
