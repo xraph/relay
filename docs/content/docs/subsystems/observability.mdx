@@ -95,4 +95,6 @@ Failed spans carry a status naming a class (a status code such as `503`, an erro
 
 `relay_deliveries_total`, `relay_delivery_latency_seconds` and `relay_dlq_size` are gone. `relay_dlq_size` only ever went up, so it never was the queue's size. Use `relay_deliveries_attempted_total`, `relay_delivery_duration_seconds` and `relay_dlq_entries_pushed_total`. For the DLQ's current size, ask the store (`DLQ().Count`) or the dashboard.
 
+The Go API behind them went with them. `observability.Metrics` no longer has `RecordDelivery(status, latency)` or the `DeliveriesTotal`, `DeliveryLatency` and `DLQSize` fields, so code that reads or records through them stops compiling. The engine now records through `RecordAttempt`, `RecordSkip`, `ObserveDelivery` and `RecordDLQPush`. `EventsSentTotal` and `PendingDeliveries` are unchanged, and `DeliveriesInFlight` is new.
+
 The old `relay.delivery` span and its `relay.error` attribute are replaced by `deliver webhook`. `relay.WithTracer` and `observability.NewTracer` still compile but do nothing, so you can drop them.
