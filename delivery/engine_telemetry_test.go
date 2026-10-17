@@ -17,6 +17,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
@@ -96,6 +98,12 @@ type telemetryFixture struct {
 
 func newTelemetryFixture(t *testing.T, url string, dlq DLQPusher) *telemetryFixture {
 	t.Helper()
+	return newLoggedFixture(t, url, dlq, nil)
+}
+
+// newLoggedFixture is newTelemetryFixture with the engine logging to logger.
+func newLoggedFixture(t *testing.T, url string, dlq DLQPusher, logger log.Logger) *telemetryFixture {
+	t.Helper()
 	f := metricstest.New()
 	ep := &endpoint.Endpoint{
 		Entity: entity.New(), ID: id.NewEndpointID(), TenantID: "tenant-1", URL: url,
@@ -113,7 +121,7 @@ func newTelemetryFixture(t *testing.T, url string, dlq DLQPusher) *telemetryFixt
 		RequestTimeout: 2 * time.Second,
 		RetrySchedule:  []time.Duration{time.Minute},
 		Metrics:        observability.NewMetrics(f),
-	}, nil)
+	}, logger)
 	return &telemetryFixture{store: store, engine: engine, metrics: f}
 }
 
@@ -434,7 +442,7 @@ func TestFailedDeliverySpans(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		fx := newTelemetryFixture(t, srv.URL, fakeDLQ{})
+		fx := newTelemetryFixture(t, secretURL(srv.URL), fakeDLQ{})
 		fx.engine.process(context.Background(), fx.delivery(3))
 
 		// The read error comes back whole for the delivery record, and
@@ -446,9 +454,49 @@ func TestFailedDeliverySpans(t *testing.T) {
 			t.Errorf("delivery error = %q", last.LastError)
 		}
 		client := tracingtest.Named(t, rec, "HTTP POST")
-		if client.Status().Code == codes.Error && client.Status().Description != "connection" {
-			t.Errorf("client status = %v, want the masked class", client.Status())
+		if client.Status().Code != codes.Error || client.Status().Description != "connection" {
+			t.Errorf("client status = %v, want Error connection", client.Status())
 		}
+		if got := tracingtest.Attrs(client)["error.type"].AsString(); got != "connection" {
+			t.Errorf("client error.type = %q", got)
+		}
+		tracingtest.AssertNoLeak(t, rec.Ended(), strings.TrimPrefix(srv.URL, "http://"), "127.0.0.1",
+			"SECRET", "hooks", "alice", "unexpected EOF")
+	})
+
+	t.Run("redirect", func(t *testing.T) {
+		rec := tracingtest.Record(t)
+		landed := make(chan string, 1)
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			landed <- r.URL.RequestURI()
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		t.Cleanup(target.Close)
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/moved/MOVEDSECRET?token=sk_live_MOVEDSECRET", http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(origin.Close)
+
+		fx := newTelemetryFixture(t, secretURL(origin.URL), fakeDLQ{})
+		fx.engine.process(context.Background(), fx.delivery(3))
+
+		if got := <-landed; got != "/moved/MOVEDSECRET?token=sk_live_MOVEDSECRET" {
+			t.Errorf("the redirect landed on %q", got)
+		}
+		var clients int
+		for _, sp := range rec.Ended() {
+			if sp.Name() == "HTTP POST" {
+				clients++
+				if u := tracingtest.Attrs(sp)["url.full"].AsString(); u != "http://REDACTED" {
+					t.Errorf("redirected request span url.full = %q", u)
+				}
+			}
+		}
+		if clients != 2 {
+			t.Errorf("%d client spans, want one per hop", clients)
+		}
+		tracingtest.AssertNoLeak(t, rec.Ended(), strings.TrimPrefix(origin.URL, "http://"),
+			strings.TrimPrefix(target.URL, "http://"), "127.0.0.1", "SECRET", "moved", "hooks")
 	})
 }
 

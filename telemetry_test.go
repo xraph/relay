@@ -15,7 +15,10 @@ import (
 	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
+	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
+	"github.com/xraph/relay/id"
+	"github.com/xraph/relay/internal/entity"
 	"github.com/xraph/relay/internal/metricstest"
 	"github.com/xraph/relay/internal/tracing/tracingtest"
 	"github.com/xraph/relay/observability"
@@ -27,11 +30,11 @@ func TestSendSpanIsAChildOfTheCaller(t *testing.T) {
 	rec := tracingtest.Record(t)
 	r, _ := setup(t)
 	registerType(t, r, "invoice.paid")
-	createEndpoint(t, r, "t1", []string{"invoice.*"})
-	createEndpoint(t, r, "t1", []string{"*"})
+	createEndpoint(t, r, "tenant-acme", []string{"invoice.*"})
+	createEndpoint(t, r, "tenant-acme", []string{"*"})
 
 	parentCtx, parent := otel.Tracer("test").Start(context.Background(), "handle request")
-	evt := &event.Event{Type: "invoice.paid", TenantID: "t1", Data: map[string]any{"email": "alice@example.com"}}
+	evt := &event.Event{Type: "invoice.paid", TenantID: "tenant-acme", Data: map[string]any{"email": "alice@example.com"}}
 	if err := r.Send(parentCtx, evt); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +52,7 @@ func TestSendSpanIsAChildOfTheCaller(t *testing.T) {
 		a["relay.fanout.count"].AsInt64() != 2 {
 		t.Errorf("attributes = %v", send.Attributes())
 	}
-	tracingtest.AssertNoLeak(t, rec.Ended(), "alice", "t1")
+	tracingtest.AssertNoLeak(t, rec.Ended(), "alice@example.com", "tenant-acme")
 }
 
 func TestSendSpanNamesTheFailureWithoutQuotingIt(t *testing.T) {
@@ -79,7 +82,7 @@ func TestSendSpanNamesTheFailureWithoutQuotingIt(t *testing.T) {
 			rec := tracingtest.Record(t)
 			r, _ := setup(t)
 			c.setup(t, r)
-			err := r.Send(ctx(), &event.Event{Type: "user.created", TenantID: "t1", Data: map[string]any{"email": "alice@example.com"}})
+			err := r.Send(ctx(), &event.Event{Type: "user.created", TenantID: "tenant-acme", Data: map[string]any{"email": "alice@example.com"}})
 			if !errors.Is(err, c.want) {
 				t.Fatalf("Send = %v, want %v", err, c.want)
 			}
@@ -91,7 +94,7 @@ func TestSendSpanNamesTheFailureWithoutQuotingIt(t *testing.T) {
 			if types := tracingtest.ExceptionTypes(send); len(types) != 1 || types[0] != c.typ {
 				t.Errorf("exception types = %v, want [%s]", types, c.typ)
 			}
-			tracingtest.AssertNoLeak(t, rec.Ended(), "alice")
+			tracingtest.AssertNoLeak(t, rec.Ended(), "alice@example.com", "tenant-acme")
 		})
 	}
 }
@@ -99,13 +102,21 @@ func TestSendSpanNamesTheFailureWithoutQuotingIt(t *testing.T) {
 func TestAcceptSpanTellsANewCommitFromARetry(t *testing.T) {
 	rec := tracingtest.Record(t)
 	s := memory.New()
-	setupMetricData(t, s, "https://example.com/hook")
+	if err := s.RegisterType(ctx(), &catalog.EventType{Entity: entity.New(), ID: id.NewEventTypeID(),
+		Definition: catalog.WebhookDefinition{Name: "test.metrics"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEndpoint(ctx(), &endpoint.Endpoint{Entity: entity.New(), ID: id.NewEndpointID(),
+		ScopeAppID: "app-acme", TenantID: "tenant-acme", URL: "https://hooks.example.com/SECRET",
+		Secret: "whsec-acme-signing-secret", Enabled: true, EventTypes: []string{"*"}}); err != nil {
+		t.Fatal(err)
+	}
 	r, err := relay.New(relay.WithStore(s))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := metricRequest()
-	req.SourceKey = "alice@example.com"
+	req.AppID, req.TenantID, req.SourceKey = "app-acme", "tenant-acme", "alice@example.com"
 	for range 2 {
 		if _, err = r.SendReliable(ctx(), req); err != nil {
 			t.Fatal(err)
@@ -126,7 +137,8 @@ func TestAcceptSpanTellsANewCommitFromARetry(t *testing.T) {
 	if len(created) != 2 || !created[0] || created[1] {
 		t.Errorf("relay.acceptance.created over two calls = %v, want [true false]", created)
 	}
-	tracingtest.AssertNoLeak(t, rec.Ended(), "alice", "tenant", "metrics-test-signing")
+	tracingtest.AssertNoLeak(t, rec.Ended(), "alice@example.com", "tenant-acme", "app-acme",
+		"whsec-acme", "hooks.example.com", "SECRET")
 }
 
 // plainStore hides memory's AcceptEvent behind the bare store interface, the
