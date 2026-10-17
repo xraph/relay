@@ -651,3 +651,23 @@ func TestLogsNeverCarryTheEndpointURL(t *testing.T) {
 		})
 	}
 }
+
+// With no transport of its own, a delivery goes out on whatever
+// http.DefaultTransport is when it's sent, as with a plain client, so a test
+// double swapped in after the engine was built still gets the request.
+func TestNilTransportReadsTheDefaultPerRequest(t *testing.T) {
+	sender := NewSender(time.Second)
+
+	swapped := &forwardingTransport{}
+	prev := http.DefaultTransport
+	http.DefaultTransport = swapped
+	t.Cleanup(func() { http.DefaultTransport = prev })
+
+	ep := &endpoint.Endpoint{URL: "https://hooks.example.com/in", Secret: "whsec_test"}
+	if result := sender.Send(context.Background(), ep, &event.Event{Type: "invoice.paid"}, &Delivery{}); result.Error != "" {
+		t.Fatalf("send: %s", result.Error)
+	}
+	if len(swapped.requests) != 1 || swapped.requests[0].URL.String() != ep.URL {
+		t.Fatalf("the swapped-in default transport sent %d requests", len(swapped.requests))
+	}
+}

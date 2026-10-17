@@ -15,9 +15,10 @@ import (
 // reads https://REDACTED and server.address reads REDACTED.
 const redactedHost = "REDACTED"
 
-// newTransport wraps base (nil means http.DefaultTransport) so every delivery
-// gets an HTTP client span and carries the trace context to the receiver,
-// without the endpoint's URL or host reaching that span.
+// newTransport wraps base (nil means http.DefaultTransport, looked up per
+// request) so every delivery gets an HTTP client span and carries the trace
+// context to the receiver, without the endpoint's URL or host reaching that
+// span.
 //
 // The tracing layer is otelhttp, set up exactly as forge.InstrumentTransport
 // sets it up (the global tracer provider and propagator, captured here),
@@ -35,9 +36,6 @@ const redactedHost = "REDACTED"
 // back above it. The delivery records the full message for its tenant, as it
 // always has.
 func newTransport(base http.RoundTripper) http.RoundTripper {
-	if base == nil {
-		base = http.DefaultTransport
-	}
 	traced := otelhttp.NewTransport(&unmaskTransport{base: base},
 		otelhttp.WithTracerProvider(otel.GetTracerProvider()),
 		otelhttp.WithPropagators(otel.GetTextMapPropagator()),
@@ -76,22 +74,28 @@ func (t *maskTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // unmaskTransport sits under the tracing layer. It puts the real URL back on
-// the request before base sends it, and masks what base returns.
+// the request before base sends it, and masks what base returns. A nil base
+// means http.DefaultTransport, read on every request as a plain client does,
+// so a transport swapped in after relay.New (httpmock, gock) still sends.
 type unmaskTransport struct {
 	base http.RoundTripper
 }
 
 func (t *unmaskTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
 	tgt, ok := r.Context().Value(targetKey{}).(target)
 	if !ok {
 		// Not sent through maskTransport. Nothing to restore.
-		return t.base.RoundTrip(r)
+		return base.RoundTrip(r)
 	}
 	out := r.WithContext(r.Context())
 	out.URL = tgt.url
 	out.Host = tgt.host
 
-	resp, err := t.base.RoundTrip(out)
+	resp, err := base.RoundTrip(out)
 	if err != nil {
 		return resp, &maskedError{err: err}
 	}
