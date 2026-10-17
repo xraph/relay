@@ -90,7 +90,7 @@ Each subsystem defines its own store interface. A backend only needs to implemen
 | `id` | TypeID-based identity: a single `ID` struct with prefix constants |
 | `signature` | HMAC-SHA256 signing and verification |
 | `ratelimit` | Token bucket rate limiter per endpoint |
-| `observability` | Metrics over go-utils `MetricFactory` and OpenTelemetry tracing |
+| `observability` | Metric instruments over a go-utils `MetricFactory`. Spans need nothing from it: relay starts them on the global tracer provider |
 | `api` | HTTP admin API: a plain `ServeMux` handler and a Forge router version |
 | `store` | Composite `Store` interface |
 | `store/memory` | In-memory store for testing |

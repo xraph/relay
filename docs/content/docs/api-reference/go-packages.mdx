@@ -140,13 +140,11 @@ Import: `github.com/xraph/relay/observability`
 
 | Export | Purpose |
 |--------|---------|
-| `Metrics` | Metric instruments over a go-utils `MetricFactory` |
-| `NewMetrics(factory)` | Create the instruments; pass `fapp.Metrics()` or `metrics.NewMetricsCollector(name)` |
-| `RecordDelivery(status, latency)` | Record a delivery attempt |
-| `Tracer` | OpenTelemetry tracer |
-| `NewTracer()` | Constructor |
-| `StartDeliverySpan(...)` | Start a delivery span |
-| `EndDeliverySpan(...)` | End a delivery span |
+| `Metrics` | Metric instruments over a go-utils `MetricFactory`. The engine records through it; `EventsSentTotal`, `PendingDeliveries` and `DeliveriesInFlight` are exported for reading |
+| `NewMetrics(factory)` | Create the instruments. Pass `fapp.Metrics()`, or any factory that keys series by name and labels |
+| `MetricEventsSent`, `MetricDeliveriesAttempted`, ... | The metric names, as registered (Forge scrapes them with a `forge_` prefix) |
+| `RecordAttempt`, `RecordSkip`, `ObserveDelivery`, `RecordDLQPush` | What the engine calls. You only call them if you build your own engine |
+| `Tracer`, `NewTracer()` | Deprecated. Relay traces through the global tracer provider without them |
 
 ## api
 

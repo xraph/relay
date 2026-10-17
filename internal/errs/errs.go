@@ -13,6 +13,10 @@ var (
 	// ErrEventNotFound is relay.ErrEventNotFound.
 	ErrEventNotFound = errors.New("relay: event not found")
 
+	// ErrDLQNotFound is relay.ErrDLQNotFound. The dlq package reads it to
+	// tell a missing entry from a failed replay.
+	ErrDLQNotFound = errors.New("relay: dlq entry not found")
+
 	// ErrInvalidFilter is relay.ErrInvalidFilter.
 	ErrInvalidFilter = errors.New("relay: invalid filter")
 )

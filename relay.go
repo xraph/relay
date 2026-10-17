@@ -7,7 +7,10 @@ import (
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/xraph/relay/acceptance"
 	"github.com/xraph/relay/catalog"
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/dlq"
@@ -15,6 +18,7 @@ import (
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/entity"
+	"github.com/xraph/relay/internal/tracing"
 	"github.com/xraph/relay/scope"
 	"github.com/xraph/relay/store"
 )
@@ -41,7 +45,7 @@ func (r *Relay) wireServices() {
 		RequestTimeout:  r.config.RequestTimeout,
 		RetrySchedule:   r.config.RetrySchedule,
 		Metrics:         r.metrics,
-		Tracer:          r.tracer,
+		HTTPClient:      r.config.HTTPClient,
 	}, r.logger)
 }
 
@@ -49,7 +53,12 @@ func (r *Relay) wireServices() {
 // (store.WakeNotifier, e.g. Postgres LISTEN/NOTIFY) additionally wake the
 // engine on cross-instance enqueues so deliveries are picked up without
 // waiting out the idle poll backoff.
+//
+// The engine and the listener keep ctx's values and cancellation but not its
+// span. Under Forge, ctx carries the "start relay" boot span, and every poll
+// and delivery after it would otherwise land in the boot trace.
 func (r *Relay) Start(ctx context.Context) {
+	ctx = tracing.Detach(ctx)
 	r.engine.Start(ctx)
 
 	if wn, ok := r.store.(store.WakeNotifier); ok {
@@ -81,8 +90,20 @@ func (r *Relay) RegisterEventType(ctx context.Context, def catalog.WebhookDefini
 // event and fanout atomically. Other stores retain the legacy sequential path.
 // Idempotency keys remain key-only no-ops; use SendReliable for content-bound
 // receipts and recovery across catalog changes and event retention.
-func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
+func (r *Relay) Send(ctx context.Context, evt *event.Event) (err error) {
 	defer r.engine.SyncPending(ctx)
+
+	ctx, span := tracing.Start(ctx, "send event",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attribute.String("relay.event.type", evt.Type)),
+	)
+	defer func() {
+		if err != nil {
+			failSpan(span, err)
+		}
+		span.End()
+	}()
+
 	// 1. Validate event type exists.
 	et, err := r.catalog.GetType(ctx, evt.Type)
 	if err != nil {
@@ -107,12 +128,14 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 	appID, orgID := scope.Capture(ctx)
 	evt.ScopeAppID = appID
 	evt.ScopeOrgID = orgID
+	span.SetAttributes(attribute.String("relay.event.id", evt.ID.String()))
 
 	if atomic, ok := r.store.(store.AtomicSender); ok {
 		count, sendErr := atomic.SendEvent(ctx, evt, r.config.MaxRetries)
 		if sendErr != nil {
 			return fmt.Errorf("relay: atomic send: %w", sendErr)
 		}
+		span.SetAttributes(attribute.Int("relay.fanout.count", count))
 		r.engine.Wake()
 		if r.metrics != nil && count > 0 {
 			r.metrics.EventsSentTotal.Inc()
@@ -123,6 +146,7 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 	// Persist the event. Idempotency key conflicts return a no-op success.
 	if createErr := r.store.CreateEvent(ctx, evt); createErr != nil {
 		if errors.Is(createErr, ErrDuplicateIdempotencyKey) {
+			span.SetAttributes(attribute.Bool("relay.event.duplicate", true))
 			return nil // idempotent: already processed
 		}
 		return fmt.Errorf("relay: persist event: %w", createErr)
@@ -134,6 +158,7 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 		return fmt.Errorf("relay: resolve endpoints: %w", err)
 	}
 
+	span.SetAttributes(attribute.Int("relay.fanout.count", len(endpoints)))
 	if len(endpoints) == 0 {
 		return nil // no matching endpoints — nothing to deliver
 	}
@@ -176,6 +201,35 @@ func (r *Relay) Send(ctx context.Context, evt *event.Event) error {
 	)
 
 	return nil
+}
+
+// spanErrors name the failures a caller can cause, for the span status and
+// exception.type. Anything else (a store or driver error) is recorded by its
+// Go type alone, because its message may quote the payload.
+var spanErrors = []struct {
+	err   error
+	class string
+	name  string
+}{
+	{ErrEventTypeNotFound, "event type not found", "relay.ErrEventTypeNotFound"},
+	{ErrEventTypeDeprecated, "event type deprecated", "relay.ErrEventTypeDeprecated"},
+	{ErrPayloadValidationFailed, "payload validation failed", "relay.ErrPayloadValidationFailed"},
+	{acceptance.ErrInvalid, "invalid request", "acceptance.ErrInvalid"},
+	{acceptance.ErrConflict, "content conflict", "acceptance.ErrConflict"},
+	{acceptance.ErrUnsupported, "unsupported store", "acceptance.ErrUnsupported"},
+	{acceptance.ErrTooManyRecipients, "too many recipients", "acceptance.ErrTooManyRecipients"},
+}
+
+// failSpan marks span failed by err without quoting err.
+func failSpan(span trace.Span, err error) {
+	for _, known := range spanErrors {
+		if errors.Is(err, known.err) {
+			tracing.Fail(span, known.class, known.name)
+			return
+		}
+	}
+	typ := tracing.ErrorType(err)
+	tracing.Fail(span, typ, typ)
 }
 
 // Endpoints returns the endpoint management service.

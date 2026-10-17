@@ -12,10 +12,19 @@ import (
 
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
+	"github.com/xraph/relay/internal/tracing"
 	"github.com/xraph/relay/signature"
 )
 
 const maxResponseBody = 1024 // 1KB cap on response body storage
+
+// Failures before a request goes out. Like the errClass values, they describe
+// a failed attempt without quoting its error.
+const (
+	failInvalidPayload = "invalid_payload"
+	failInvalidRequest = "invalid_request"
+	failNoSigningKey   = "no_signing_key"
+)
 
 // Sender performs HTTP webhook delivery.
 type Sender struct {
@@ -36,20 +45,40 @@ const (
 
 func NewSender(timeout time.Duration) *Sender {
 	return &Sender{
-		client: &http.Client{Timeout: timeout},
+		client: &http.Client{Timeout: timeout, Transport: newTransport(nil)},
 	}
+}
+
+// NewSenderWithClient sends deliveries through client, for example one whose
+// dialer refuses private addresses. A client with no Timeout gets timeout.
+// The client is copied, so the caller's value is never changed, and its
+// redirect policy, cookie jar and timeout carry over.
+//
+// Its transport (http.DefaultTransport when nil) still sends every request,
+// wrapped in the same tracing as a client relay builds itself: a client span
+// with the URL redacted, and the trace context on the request. Pass a
+// transport that isn't traced already. Tracing underneath relay's layer would
+// see the real URL.
+func NewSenderWithClient(client *http.Client, timeout time.Duration) *Sender {
+	c := *client
+	if c.Timeout == 0 {
+		c.Timeout = timeout
+	}
+	c.Transport = newTransport(client.Transport)
+
+	return &Sender{client: &c}
 }
 
 // Send delivers an event to an endpoint and returns the result.
 func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Event, d *Delivery) Result {
 	body, err := json.Marshal(evt.Data)
 	if err != nil {
-		return Result{Error: fmt.Sprintf("marshal payload: %v", err)}
+		return Result{Error: fmt.Sprintf("marshal payload: %v", err), errClass: failInvalidPayload, errType: tracing.ErrorType(err)}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.URL, bytes.NewReader(body))
 	if err != nil {
-		return Result{Error: fmt.Sprintf("create request: %v", err)}
+		return Result{Error: fmt.Sprintf("create request: %v", err), errClass: failInvalidRequest, errType: tracing.ErrorType(err)}
 	}
 
 	// Standard headers.
@@ -67,7 +96,7 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 	ts := time.Now().Unix()
 	sig, sigErr := signature.Sign(body, ep.Secret, ts)
 	if sigErr != nil {
-		return Result{Error: fmt.Sprintf("endpoint has no signing secret: %v", sigErr)}
+		return Result{Error: fmt.Sprintf("endpoint has no signing secret: %v", sigErr), errClass: failNoSigningKey, errType: tracing.ErrorType(sigErr)}
 	}
 	req.Header.Set(HeaderSignature, sig)
 	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
@@ -79,12 +108,17 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 
 	start := time.Now()
 	resp, err := s.client.Do(req)
-	latency := time.Since(start).Milliseconds()
+	elapsed := time.Since(start)
+	latency := int(elapsed.Milliseconds())
 
 	if err != nil {
 		return Result{
 			Error:     err.Error(),
-			LatencyMs: int(latency),
+			LatencyMs: latency,
+			sent:      true,
+			duration:  elapsed,
+			errClass:  classify(err),
+			errType:   tracing.ErrorType(err),
 		}
 	}
 	defer resp.Body.Close()
@@ -94,13 +128,18 @@ func (s *Sender) Send(ctx context.Context, ep *endpoint.Endpoint, evt *event.Eve
 		return Result{
 			StatusCode: resp.StatusCode,
 			Error:      fmt.Sprintf("read response: %v", readErr),
-			LatencyMs:  int(latency),
+			LatencyMs:  latency,
+			sent:       true,
+			duration:   elapsed,
+			errType:    tracing.ErrorType(readErr),
 		}
 	}
 
 	return Result{
 		StatusCode: resp.StatusCode,
 		Response:   string(respBody),
-		LatencyMs:  int(latency),
+		LatencyMs:  latency,
+		sent:       true,
+		duration:   elapsed,
 	}
 }

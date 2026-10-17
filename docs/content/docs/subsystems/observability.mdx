@@ -1,64 +1,100 @@
 ---
 title: Observability
-description: Delivery metrics through go-utils metrics, and OpenTelemetry tracing.
+description: "Delivery metrics on Forge's registry, and OpenTelemetry spans for every send, delivery and replay."
 ---
 
-The `observability` package records delivery metrics and OpenTelemetry spans. The Forge extension wires both for you, using the app's metrics. Outside Forge you pass them to `relay.New` yourself.
+In a Forge app you don't set anything up. The extension records relay's metrics on `app.Metrics()`, so they're on `/_/metrics` next to the rest of the app's, and relay starts its spans on the tracer provider `forge.New` installs. Run a delivery and you'll see a `deliver webhook` trace with the HTTP request under it.
 
-## Metrics
-
-`NewMetrics` takes a `github.com/xraph/go-utils/metrics` `MetricFactory`. Inside a Forge extension that's `fapp.Metrics()`; standalone, `metrics.NewMetricsCollector(name)` works:
+Outside Forge, pass a metrics factory yourself:
 
 ```go
 import (
-    gumetrics "github.com/xraph/go-utils/metrics"
     "github.com/xraph/relay"
     "github.com/xraph/relay/observability"
 )
 
 r, err := relay.New(
     relay.WithStore(store),
-    relay.WithMetrics(observability.NewMetrics(gumetrics.NewMetricsCollector("relay"))),
-    relay.WithTracer(observability.NewTracer()),
+    relay.WithMetrics(observability.NewMetrics(factory)),
 )
 ```
 
-Relay doesn't register anything with Prometheus on its own. Forge's metrics exporter serves these alongside the app's other metrics.
+`factory` is any `github.com/xraph/go-utils/metrics` `MetricFactory`. It has to keep series apart by name and labels, the way Forge's registry does. go-utils' own `NewMetricsCollector` keys by name alone, so every labelled series below would fold into one. Without `WithMetrics` relay records no metrics. Spans need no option: they go to the global tracer provider, and with none installed they cost nothing.
 
-### Available metrics
+## Metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `relay_events_sent_total` | Counter | Total events submitted |
-| `relay_deliveries_total` | Counter | Delivery attempts, labelled by `status` (`delivered`, `failed`, `retried`) |
-| `relay_delivery_latency_seconds` | Histogram | HTTP request latency per delivery |
-| `relay_dlq_size` | Gauge | Deliveries moved to the DLQ since the process started. The engine only increments it; replay and purge don't lower it |
-| `relay_pending_deliveries` | Gauge | The last pending count read from the store (`CountPending`) |
+Every series exists from the start at zero, and no label ever holds an ID, a tenant, an event type, a URL, a host or an error message. The names below are what Forge scrapes. Relay registers them without the `forge_` prefix (`relay_events_sent_total`), and Forge adds its namespace.
 
-### Recording deliveries
+| Metric | Type | Labels | What it counts |
+|--------|------|--------|----------------|
+| `forge_relay_events_sent_total` | Counter | none | Events accepted and fanned out: successful `Send` calls and new `SendReliable` commits. A retried `SendReliable` that finds its receipt doesn't count |
+| `forge_relay_deliveries_attempted_total` | Counter | `outcome` | One per delivery attempt, by what the engine decided after it |
+| `forge_relay_deliveries_skipped_total` | Counter | `reason` | Dequeued deliveries the engine didn't attempt |
+| `forge_relay_delivery_duration_seconds` | Histogram | `status_class`, `error_type` | Time from sending a delivery to its response headers, or to its failure. Requests that never went out (an endpoint with no secret, say) aren't timed |
+| `forge_relay_dlq_entries_pushed_total` | Counter | `result` | Writes of permanently failed deliveries to the dead letter queue |
+| `forge_relay_pending_deliveries` | Gauge | none | The last pending count read from the store (`CountPending`). `RELIABILITY.md` in the repo says when it's sampled |
+| `forge_relay_deliveries_in_flight` | Gauge | none | Deliveries this process is sending right now, out of `Concurrency`. Set from the engine's own count, so it can't drift |
 
-The delivery engine calls this after every attempt. You only call it yourself if you build your own sender:
+The label values:
 
-```go
-metrics.RecordDelivery("delivered", 0.245)
-metrics.RecordDelivery("failed", 1.023)
+| Label | Values |
+|-------|--------|
+| `outcome` | `delivered`, `retry`, `dlq` (a 4xx, or retries ran out), `endpoint_disabled` (the receiver answered 410). The same words the attempt history stores |
+| `reason` | `rate_limited` (back in the queue until the endpoint's rate limit has a token), `orphaned` (its endpoint or event no longer exists, so it failed), `store_error` (loading them failed, so it went back to pending) |
+| `status_class` | `2xx`, `3xx`, `4xx`, `5xx`, `other`, or `none` when no response came back |
+| `error_type` | `none` when a response came back, otherwise `timeout`, `canceled`, `dns`, `tls`, `connection` or `other` |
+| `result` | `ok`, `error` |
+
+A request either got a response or it didn't, so exactly one of `status_class` and `error_type` is `none`. That leaves 11 duration series. The buckets run from 25 ms to 60 s, past the default 30 s request timeout.
+
+A few queries to start from:
+
+```text
+# Share of attempts that delivered, over five minutes
+sum(rate(forge_relay_deliveries_attempted_total{outcome="delivered"}[5m]))
+  / sum(rate(forge_relay_deliveries_attempted_total[5m]))
+
+# p95 time to a response, by status class
+histogram_quantile(0.95, sum by (le, status_class) (
+  rate(forge_relay_delivery_duration_seconds_bucket{error_type="none"}[5m])))
+
+# Deliveries that failed for good and left nothing to replay. Alert on any.
+increase(forge_relay_dlq_entries_pushed_total{result="error"}[15m]) > 0
+
+# Workers saturated: in flight sits at your Concurrency
+max(forge_relay_deliveries_in_flight)
 ```
 
-## OpenTelemetry tracing
+Forge's own HTTP metrics already cover the admin API, and grove records `db_client_operation_duration_seconds` for every store query, so relay doesn't measure either again.
 
-```go
-import "github.com/xraph/relay/observability"
+## Tracing
 
-tracer := observability.NewTracer()
+| Span | Kind | Parent | Attributes |
+|------|------|--------|------------|
+| `send event` | Internal | Your span, if `Send` gets one in its context | `relay.event.type`, `relay.event.id`, `relay.fanout.count`, `relay.event.duplicate` (an idempotent no-op) |
+| `accept event` | Internal | Your span, from `SendReliable` | `relay.event.type`, `relay.event.id`, `relay.fanout.count`, `relay.acceptance.created` (false for a retry that found its receipt) |
+| `deliver webhook` | Internal | None. Every attempt is the root of its own trace | `relay.delivery.id`, `relay.event.id`, `relay.endpoint.id`, `relay.event.type`, `relay.delivery.attempt`, `relay.delivery.outcome`, `http.response.status_code`, `error.type` |
+| `HTTP POST` | Client | `deliver webhook` | otelhttp's: `http.request.method`, `http.response.status_code`, `error.type`, and `url.full` and `server.address` redacted (below) |
+| `replay dlq` | Internal | Your span, from `Replay` or `ReplayBulk` | `relay.dlq.mode` (`single` or `bulk`), `relay.dlq.replayed`, `relay.dlq.entry.id` (single only), `relay.dlq.already_replayed` |
 
-ctx, span := tracer.StartDeliverySpan(ctx, deliveryID, eventID, endpointID)
-defer tracer.EndDeliverySpan(span, statusCode, latencyMs, errMsg)
-```
+`relay.delivery.outcome` takes the four `outcome` values above, plus the three `reason` values for a delivery that wasn't attempted. The store queries inside each span show up as grove's `db.client` spans under it.
 
-Each delivery span includes attributes:
-- `relay.delivery_id`
-- `relay.event_id`
-- `relay.endpoint_id`
-- `http.status_code`
-- `relay.latency_ms`
-- `relay.error` (if present)
+A delivery doesn't join the trace of whatever sent the event. Deliveries happen later, are retried on their own schedule and can fan out to many endpoints, so each attempt starts its own trace. The engine also drops the span it was started under: in a Forge app that's the `start relay` boot span, and without this every delivery and every poll's queries would have landed in the boot trace. A poll that finds nothing starts no trace at all.
+
+### What the receiver sees
+
+With a propagator installed (Forge installs one), each delivery carries a `traceparent` header for its `deliver webhook` trace, so a receiver that traces too can link its handling back to your delivery. It replaces any `traceparent` an endpoint's custom headers set. Baggage from the context relay was started with is dropped, so nothing from your app's baggage reaches a third party.
+
+### What never goes on a span
+
+Webhook URLs are customer data, and many carry their secret in the path or query string. The client span is built by otelhttp, which would normally copy the full URL into `url.full` and the host into `server.address`. Relay hands it a request addressed to `https://REDACTED` and puts the real URL back underneath, so those attributes read `https://REDACTED` and `REDACTED`. A client you pass with `WithHTTPClient` gets the same wrapping around its transport. Don't give it a transport that's traced already (such as `forge.HTTPClient()`'s): that tracing would sit underneath relay's and see the real URL. Transport errors get the same treatment: a dial error names the host and its address, so the span status says only `connection` or `timeout`. The delivery's own last error still holds the full message for the tenant.
+
+Failed spans carry a status naming a class (a status code such as `503`, an error class, a sentinel such as `event type not found`, or a Go type), never the error's text. Their `exception` events carry only `exception.type`. Relay never records payloads, signatures, secrets, endpoint headers, tenant IDs or error messages on a span. A missing endpoint or event, a rate-limited delivery, an idempotent duplicate and a replay that lost its race aren't errors.
+
+## Upgrading from earlier versions
+
+`relay_deliveries_total`, `relay_delivery_latency_seconds` and `relay_dlq_size` are gone. `relay_dlq_size` only ever went up, so it never was the queue's size. Use `relay_deliveries_attempted_total`, `relay_delivery_duration_seconds` and `relay_dlq_entries_pushed_total`. For the DLQ's current size, ask the store (`DLQ().Count`) or the dashboard.
+
+The Go API behind them went with them. `observability.Metrics` no longer has `RecordDelivery(status, latency)` or the `DeliveriesTotal`, `DeliveryLatency` and `DLQSize` fields, so code that reads or records through them stops compiling. The engine now records through `RecordAttempt`, `RecordSkip`, `ObserveDelivery` and `RecordDLQPush`. `EventsSentTotal` and `PendingDeliveries` are unchanged, and `DeliveriesInFlight` is new.
+
+The old `relay.delivery` span and its `relay.error` attribute are replaced by `deliver webhook`. `relay.WithTracer` and `observability.NewTracer` still compile but do nothing, so you can drop them.

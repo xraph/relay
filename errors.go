@@ -38,7 +38,7 @@ var (
 	ErrMigrationFailed = errors.New("relay: migration failed")
 
 	// ErrDLQNotFound is returned when a DLQ entry cannot be found.
-	ErrDLQNotFound = errors.New("relay: dlq entry not found")
+	ErrDLQNotFound = errs.ErrDLQNotFound
 
 	// ErrAlreadyReplayed is returned when a DLQ entry that has already been
 	// replayed is replayed again. Replaying re-sends a real webhook, so the

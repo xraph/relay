@@ -8,12 +8,16 @@ import (
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/relay/delivery"
 	"github.com/xraph/relay/endpoint"
 	"github.com/xraph/relay/event"
 	"github.com/xraph/relay/id"
 	"github.com/xraph/relay/internal/entity"
+	"github.com/xraph/relay/internal/errs"
+	"github.com/xraph/relay/internal/tracing"
 )
 
 // ErrAlreadyReplayed is returned when a DLQ entry that has already been
@@ -115,12 +119,49 @@ func (svc *Service) Get(ctx context.Context, dlqID id.ID) (*Entry, error) {
 // The replayed delivery takes its retry budget from config. The per-backend
 // Replay this replaced left MaxAttempts at 0 on postgres, sqlite and redis,
 // so the retrier evaluated `1 < 0` and sent the delivery straight back here.
-func (svc *Service) Replay(ctx context.Context, dlqID id.ID) error {
+func (svc *Service) Replay(ctx context.Context, dlqID id.ID) (err error) {
+	ctx, span := startReplaySpan(ctx, "single",
+		attribute.String("relay.dlq.entry.id", dlqID.String()))
+	defer func() {
+		replayed := int64(0)
+		if err == nil {
+			replayed = 1
+		}
+		endReplaySpan(span, replayed, err)
+	}()
+
 	entry, err := svc.store.GetDLQ(ctx, dlqID)
 	if err != nil {
 		return err
 	}
 	return svc.replayEntry(ctx, entry)
+}
+
+// startReplaySpan starts the span around a single or bulk replay.
+func startReplaySpan(ctx context.Context, mode string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	attrs = append(attrs, attribute.String("relay.dlq.mode", mode))
+	return tracing.Start(ctx, "replay dlq",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attrs...),
+	)
+}
+
+// endReplaySpan records how many entries a replay re-enqueued and ends its
+// span. Losing the claim to another caller, or a missing entry, is not a
+// failure of the replay: the entry was sent once, or there was nothing to
+// send. Anything else is, and the span records it by the error's Go type.
+func endReplaySpan(span trace.Span, replayed int64, err error) {
+	span.SetAttributes(attribute.Int64("relay.dlq.replayed", replayed))
+	switch {
+	case err == nil, errors.Is(err, errs.ErrDLQNotFound):
+		// Done, or nothing to replay.
+	case errors.Is(err, ErrAlreadyReplayed):
+		span.SetAttributes(attribute.Bool("relay.dlq.already_replayed", true))
+	default:
+		typ := tracing.ErrorType(err)
+		tracing.Fail(span, typ, typ)
+	}
+	span.End()
 }
 
 // replayEntry claims entry, then sends it. The order is the whole point.
@@ -173,13 +214,15 @@ func (svc *Service) replayEntry(ctx context.Context, entry *Entry) error {
 // The window is on failed_at, as it always was: ListDLQ filters From and To on
 // that column on every backend. A zero Limit means every matching entry on
 // every backend, so the window is never silently truncated to a page.
-func (svc *Service) ReplayBulk(ctx context.Context, from, to time.Time) (int64, error) {
+func (svc *Service) ReplayBulk(ctx context.Context, from, to time.Time) (count int64, err error) {
+	ctx, span := startReplaySpan(ctx, "bulk")
+	defer func() { endReplaySpan(span, count, err) }()
+
 	entries, err := svc.store.ListDLQ(ctx, ListOpts{From: &from, To: &to})
 	if err != nil {
 		return 0, err
 	}
 
-	var count int64
 	for _, e := range entries {
 		if e.ReplayedAt != nil {
 			continue
@@ -187,13 +230,13 @@ func (svc *Service) ReplayBulk(ctx context.Context, from, to time.Time) (int64, 
 		// The listed entry already carries what replayEntry needs, so this
 		// skips the extra read Replay would make. ReplayedAt was checked above
 		// only as a shortcut; the claim inside replayEntry is what decides.
-		if err := svc.replayEntry(ctx, e); err != nil {
+		if replayErr := svc.replayEntry(ctx, e); replayErr != nil {
 			// Another caller claimed it between the list and now. Not a
 			// failure: it was sent once, which is the point.
-			if errors.Is(err, ErrAlreadyReplayed) {
+			if errors.Is(replayErr, ErrAlreadyReplayed) {
 				continue
 			}
-			return count, err
+			return count, replayErr
 		}
 		count++
 	}
