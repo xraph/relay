@@ -15,7 +15,7 @@ Relay is a library, not a service. You bring your own HTTP server, database, and
 - HMAC-SHA256 signatures: every delivery is signed. Receivers verify authenticity with a single function call.
 - Rate limiting: a per-endpoint token bucket limiter prevents overloading downstream services.
 - Admin HTTP API: CRUD for event types, endpoints, events, deliveries, and DLQ replay.
-- Observability: counters, a latency histogram and gauges through go-utils metrics (Forge's metrics in an app), and an OpenTelemetry span per delivery.
+- Observability: delivery outcomes, skips, timings and DLQ writes as metrics with fixed labels (Forge's metrics in an app), and an OpenTelemetry trace per delivery attempt with the endpoint's URL kept off it.
 - Pluggable storage: memory, plus PostgreSQL, SQLite, MongoDB and Redis through Grove. Implement `store.Store` for anything else.
 
 ## Design philosophy

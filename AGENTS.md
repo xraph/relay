@@ -41,7 +41,7 @@ Memory and SQLite always run in-process and need nothing from you. SQLite tests 
 | `store/storetest` | Conformance suites every backend runs |
 | `acceptance/` | The reliable acceptance protocol. `RELIABILITY.md` describes it from the caller's side |
 | `signature/` | HMAC-SHA256 signing and verification, `GenerateSecret` |
-| `ratelimit/`, `observability/`, `scope/` | Per-endpoint token buckets, OpenTelemetry tracing and metrics, tenant scope capture and restore |
+| `ratelimit/`, `observability/`, `scope/` | Per-endpoint token buckets, metric instruments, tenant scope capture and restore |
 | `api/` | Admin HTTP handlers (`ForgeAPI`) |
 | `extension/` | The Forge extension. `extension/contract` wires the dashboard contract (`manifest.yaml`) |
 | `id/` | TypeID identifiers |
@@ -58,7 +58,7 @@ Each backend asserts `var _ relaystore.Store = (*Store)(nil)` (Mongo spells it `
 
 Backends take no options (`postgres.New(db)`, `redis.New(kvStore)`). Relay itself uses `type Option func(*Relay) error`, so an option can fail `New`. The extension has `type ExtOption func(*Extension)`, and `WithRelayOption` passes a root option through.
 
-The Forge extension is `extension.New(opts...)`, embedding `*forge.BaseExtension`. `Register` loads config from `extensions.relay` (falling back to the legacy `relay` key), calls `Init`, then publishes `*relay.Relay` with `vessel.Provide`. `Init` picks the store: a named `*grove.DB` under `WithGroveDatabase`, a named `*kv.Store` with the Redis store under `WithGroveKV`, otherwise whatever default `*grove.DB` the container has. It wires metrics through `fapp.Metrics()`, runs `Migrate` unless you disabled it, and mounts the API under `BasePath` (`/relay` by default). `Start` and `Stop` run the delivery engine. Herald's webhook driver and dispatch's `relay_hook` both take a `*relay.Relay`, so its exported methods are what they build against.
+The Forge extension is `extension.New(opts...)`, embedding `*forge.BaseExtension`. `Register` loads config from `extensions.relay` (falling back to the legacy `relay` key), calls `Init`, then publishes `*relay.Relay` with `vessel.Provide`. `Init` picks the store: a named `*grove.DB` under `WithGroveDatabase`, a named `*kv.Store` with the Redis store under `WithGroveKV`, otherwise whatever default `*grove.DB` the container has. It wires the logger and metrics through `e.Logger()` and `fapp.Metrics()`, runs `Migrate` unless you disabled it, and mounts the API under `BasePath` (`/relay` by default). `Start` and `Stop` run the delivery engine. Herald's webhook driver and dispatch's `relay_hook` both take a `*relay.Relay`, so its exported methods are what they build against.
 
 Logging goes through `github.com/xraph/go-utils/log`. If you don't pass a logger, you get `log.NewNoopLogger()`. Fields are typed (`log.String`, `log.Any("error", err)`), and inside the extension you use `e.Logger()` with `forge.F`.
 

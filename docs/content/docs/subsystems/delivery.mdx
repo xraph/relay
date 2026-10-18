@@ -72,4 +72,4 @@ var DefaultRetrySchedule = []time.Duration{
 | `WithRequestTimeout(d)` | `30s` | HTTP timeout per attempt |
 | `WithMaxRetries(n)` | `5` | Max attempts before DLQ |
 | `WithRetrySchedule(s)` | See above | Backoff intervals; the last one repeats if you allow more attempts than entries |
-| `WithHTTPClient(c)` | plain client | The client deliveries go out on |
+| `WithHTTPClient(c)` | plain client | The client deliveries go out on. Its transport, timeout, redirect policy and jar are kept, and relay traces it like its own client |

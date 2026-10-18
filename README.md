@@ -120,7 +120,7 @@ Sending one webhook is a `http.Post`. Sending them to hundreds of customer endpo
 | Replay | A dead letter queue with `Replay`, `ReplayBulk` over a time range, and `Purge` |
 | Backpressure on receivers | A token bucket per endpoint, set as deliveries per second on `endpoint.Input.RateLimit` |
 | Safe retries from your own producer | `IdempotencyKey` on `Send`, or `SendReliable` with content-bound receipts on memory and PostgreSQL ([RELIABILITY.md](RELIABILITY.md)) |
-| Visibility | OpenTelemetry spans per delivery, plus counters, a latency histogram and gauges through Forge's metrics |
+| Visibility | A trace per delivery attempt with the endpoint URL redacted, and outcome, skip, timing and DLQ metrics with fixed labels through Forge's metrics ([observability docs](docs/content/docs/subsystems/observability.mdx)) |
 | An admin API | HTTP handlers for event types, endpoints, events, deliveries, the DLQ and stats |
 
 ## Verify a webhook
@@ -201,12 +201,12 @@ Every backend runs the same conformance suites in `store/storetest`. If you writ
 | `WithMaxPollInterval(d)` | `30s` | The cap on the idle backoff, which doubles from the poll interval while polls come back empty |
 | `WithBatchSize(n)` | `50` | Deliveries taken per poll |
 | `WithRequestTimeout(d)` | `30s` | HTTP timeout per attempt |
-| `WithHTTPClient(c)` | plain client | The client deliveries go out on, for example one whose dialer refuses private addresses |
+| `WithHTTPClient(c)` | plain client | The client deliveries go out on, for example one whose dialer refuses private addresses. Relay wraps its transport in tracing, so don't pass one that's traced already |
 | `WithMaxRetries(n)` | `5` | Attempts before a delivery goes to the DLQ |
 | `WithRetrySchedule(s)` | `5s, 30s, 2m, 15m, 2h` | Waits between attempts; the last one repeats if you allow more attempts than entries |
 | `WithShutdownTimeout(d)` | `30s` | Stored in `Config`, but the engine's `Stop` doesn't read it yet |
 | `WithCacheTTL(d)` | `30s` | The catalog's in-memory cache; `0` turns it off |
-| `WithMetrics(m)`, `WithTracer(t)` | none | `observability.NewMetrics(factory)` and `observability.NewTracer()` |
+| `WithMetrics(m)` | none | `observability.NewMetrics(factory)`. Spans go to the global tracer provider with no option; `WithTracer` is deprecated and does nothing |
 
 ## Use it with Forge
 
@@ -235,7 +235,7 @@ app := forge.NewApp(forge.AppConfig{
 
 Tune the engine through `WithConfig`, as above, and start from `DefaultConfig()`. `WithRelayOption(relay.WithMaxRetries(8))` looks like it should work, but it doesn't: the extension fills the embedded `relay.Config` with defaults and appends those options after yours, so the engine ends up with 5 retries. The same goes for concurrency, the poll intervals, batch size, request timeout, the retry schedule, the shutdown timeout and the cache TTL. Keep `WithRelayOption` for options `Config` doesn't carry, like `relay.WithHTTPClient` and `relay.WithLogger`. `WithConfig` replaces the whole config, so put it before `WithBasePath`, `WithGroveDatabase` and the other options that write into it.
 
-During `Register` the extension picks a store, builds the engine with Forge's metrics and an OpenTelemetry tracer, runs the store's migrations, mounts the admin API, and provides `*relay.Relay` to the container. Resolve it with `forge.Inject[*relay.Relay](app.Container())`. The app's `Start` and `Stop` start and stop the delivery engine, and the health check pings the store.
+During `Register` the extension picks a store, builds the engine with the app's logger and metrics, runs the store's migrations, mounts the admin API, and provides `*relay.Relay` to the container. Resolve it with `forge.Inject[*relay.Relay](app.Container())`. The app's `Start` and `Stop` start and stop the delivery engine, and the health check pings the store.
 
 The store comes from the first of these that applies:
 
