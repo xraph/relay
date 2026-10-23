@@ -328,6 +328,6 @@ The container tests skip quietly when Docker isn't running, so a green run witho
 
 ## License
 
-See the [Relay repository](https://github.com/xraph/relay) for license terms.
+MIT. See [LICENSE](LICENSE).
 
 Relay is part of the [forgery stack](https://github.com/xraph/forge#the-forgery-stack) built on [Forge](https://github.com/xraph/forge), by [Rex Raphael](https://github.com/juicycleff) and [contributors](https://github.com/xraph/relay/graphs/contributors).
